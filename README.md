@@ -1,50 +1,60 @@
-# AI-Powered Database Query Performance Advisor — MERN
+# ⚡ QueryPilot — AI-Powered Database Query Performance Advisor (MERN)
 
-A complete MERN Stack project for analyzing SQL queries, detecting common performance bottlenecks, recommending indexes, and generating optimization reports.
+[![Live Demo](https://img.shields.io/badge/Demo-Live%20on%20Vercel-black?style=for-the-badge&logo=vercel)](https://client-black-pi-23.vercel.app)
+[![Backend Status](https://img.shields.io/badge/Backend-Render%20Live-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://ai-powered-database-query-performance.onrender.com)
+[![Database](https://img.shields.io/badge/Database-MongoDB%20Atlas-47A248?style=for-the-badge&logo=mongodb&logoColor=white)](https://cloud.mongodb.com)
 
-## Stack
-- MongoDB — report storage
-- Express.js — REST API
-- React.js — dashboard UI
-- Node.js — backend runtime
+An explainable, rule-based SQL performance advisor and DBA diagnostic platform built with the MERN stack. QueryPilot inspects queries, flags anti-patterns, recommends composite indexes, scores workload risk, and exports DBA audit reports.
 
-## Features
-- SQL query editor
-- AI-inspired explainable rule engine
-- Performance score
-- Risk level
-- Bottleneck detection
-- Index recommendations
-- Optimization recommendations
-- DBA report generation/download
-- MongoDB report history
-- Dashboard statistics
+🔗 **Live Production Application:** [client-black-pi-23.vercel.app](https://client-black-pi-23.vercel.app)  
+🔗 **Live Backend API:** [ai-powered-database-query-performance.onrender.com](https://ai-powered-database-query-performance.onrender.com)
 
-## Requirements
-Node.js 18+
-MongoDB local or MongoDB Atlas
+---
 
-## Setup
-1. Open terminal in this project.
-2. Install root dependency:
-   `npm install`
-3. Install backend/frontend:
-   `npm run install-all`
-4. Copy `server/.env.example` to `server/.env`.
-5. Set MongoDB URI if needed.
-6. Start:
-   `npm run dev`
+## 🛠️ Tech Stack
 
-Frontend: http://localhost:5173
-Backend: http://localhost:5000
+- **Frontend:** React (Vite), Modern Responsive UI, jsPDF, Lucide Icons
+- **Backend:** Node.js, Express.js REST API
+- **Database:** MongoDB Atlas via Mongoose
+- **Authentication:** JWT (JSON Web Tokens) & bcrypt.js password hashing
+- **Deployment:** Vercel (Client SPA) & Render (Node Web Service)
 
-## Sample query
-SELECT *
-FROM orders o
-JOIN customers c ON o.customer_id = c.id
-WHERE LOWER(c.email) LIKE '%gmail.com'
-  AND o.status = 'completed'
-ORDER BY o.created_at DESC;
+---
 
-## Note
-The analysis engine is an explainable rule-based AI-style advisor. It does not execute arbitrary SQL against production databases. A production version can consume EXPLAIN/EXPLAIN ANALYZE output and add an ML/LLM model.
+## ✨ Features
+
+- **SQL Query Analysis Engine:** Tokenizes and evaluates SQL queries for common performance anti-patterns.
+- **Explainable Performance Scoring:** Calculates health scores (0–100) and assigns categorized risk levels (Low, Medium, High).
+- **Anti-Pattern & Bottleneck Detection:**
+  - `SELECT *` unindexed overhead detection
+  - Leading wildcard searches (`LIKE '%...'`) causing full table scans
+  - Functions applied directly to filter columns (`LOWER()`, `UPPER()`) invalidating standard B-Tree index lookups
+  - Missing or unbounded sorting (`ORDER BY` without `LIMIT`)
+  - Cartesians and unindexed joins
+- **DBA Index Recommendations:** Auto-generates exact composite index DDL statements tailored to detected filter and join predicates.
+- **Cloud Audit History:** Persists analysis history, query inputs, and diagnostic metrics directly in MongoDB Atlas.
+- **Exportable DBA Reports:** Client-side generation of structured diagnostic reports in PDF format.
+- **Multi-Tenant Authentication:** User registration, credential security, and user-isolated query audits.
+
+---
+
+## 📁 Project Architecture
+
+```text
+AI-Powered-Database-Query-Performance-Advisor-MERN/
+├── client/                     # Frontend React (Vite) application
+│   ├── src/
+│   │   ├── components/         # Modular UI blocks (Auth, Dashboard, Workbench)
+│   │   ├── App.jsx             # Root view & API routing
+│   │   └── main.jsx            # Application entry
+│   ├── package.json
+│   └── vite.config.js
+├── server/                     # Backend Node / Express API
+│   ├── models/                 # Mongoose schemas (User, Report)
+│   ├── services/
+│   │   └── analyzer.js         # Core query diagnostic & rule engine
+│   ├── server.js               # Express application entry & endpoints
+│   ├── .env.example            # Environment variables blueprint
+│   └── package.json
+├── package.json                # Monorepo root scripts
+└── README.md
