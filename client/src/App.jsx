@@ -26,8 +26,7 @@ import {
   Zap,
 } from "lucide-react";
 
-const API = "http://localhost:5000/api";
-
+const API = "https://ai-powered-database-query-performance.onrender.com/api";
 const SAMPLE_DEFAULT = `SELECT *
 FROM orders o
 JOIN customers c ON o.customer_id = c.id
