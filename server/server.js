@@ -127,11 +127,11 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// Save Analysis (Associates document with userEmail)
+// Save Analysis (Strictly saves normalized userEmail)
 app.post("/api/analyze", async (req, res) => {
   try {
     const sql = String(req.body.sql || "");
-    const userEmail = req.body.userEmail ? req.body.userEmail.toLowerCase().trim() : null;
+    const userEmail = req.body.userEmail ? req.body.userEmail.toLowerCase().trim() : "anonymous";
     const analysis = analyzeSQL(sql);
     
     const report = reportDocument({ 
@@ -151,19 +151,19 @@ app.post("/api/analyze", async (req, res) => {
   }
 });
 
-// Fetch Reports (Matches userEmail OR untagged legacy reports)
+// Fetch Reports (Strictly filtered by the requesting userEmail)
 app.get("/api/reports", async (req, res) => {
   try {
     if (!db) return res.json({ ok: true, reports: [] });
     const userEmail = req.query.userEmail ? req.query.userEmail.toLowerCase().trim() : null;
-    
-    const filter = userEmail 
-      ? { $or: [{ userEmail }, { userEmail: null }, { userEmail: { $exists: false } }] }
-      : {};
+
+    if (!userEmail) {
+      return res.json({ ok: true, reports: [] });
+    }
 
     const reports = await db
       .collection("reports")
-      .find(filter)
+      .find({ userEmail })
       .sort({ createdAt: -1 })
       .limit(25)
       .toArray();
@@ -174,19 +174,19 @@ app.get("/api/reports", async (req, res) => {
   }
 });
 
-// Fetch Dashboard KPI Stats (Matches userEmail OR untagged legacy reports)
+// Fetch Dashboard KPI Stats (Strictly filtered by the requesting userEmail)
 app.get("/api/stats", async (req, res) => {
   try {
     if (!db) return res.json({ ok: true, total: 0, averageScore: 0, highRisk: 0 });
     const userEmail = req.query.userEmail ? req.query.userEmail.toLowerCase().trim() : null;
-    
-    const filter = userEmail 
-      ? { $or: [{ userEmail }, { userEmail: null }, { userEmail: { $exists: false } }] }
-      : {};
+
+    if (!userEmail) {
+      return res.json({ ok: true, total: 0, averageScore: 0, highRisk: 0 });
+    }
 
     const docs = await db
       .collection("reports")
-      .find(filter, { projection: { "analysis.performanceScore": 1, "analysis.riskLevel": 1 } })
+      .find({ userEmail }, { projection: { "analysis.performanceScore": 1, "analysis.riskLevel": 1 } })
       .toArray();
 
     const total = docs.length;
@@ -194,6 +194,7 @@ app.get("/api/stats", async (req, res) => {
       ? Math.round(docs.reduce((s, d) => s + (d.analysis?.performanceScore || 0), 0) / total)
       : 0;
     const highRisk = docs.filter((d) => d.analysis?.riskLevel === "High").length;
+
     res.json({ ok: true, total, averageScore, highRisk });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -208,7 +209,6 @@ async function start() {
     const client = new MongoClient(rawUri);
     await client.connect();
 
-    // Explicitly target query_performance_advisors (plural)
     const targetDbName = process.env.MONGODB_DB || "query_performance_advisors";
     db = client.db(targetDbName);
 
