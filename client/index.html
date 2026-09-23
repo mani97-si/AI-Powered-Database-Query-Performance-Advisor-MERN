@@ -1,12 +1,19 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>QueryPilot</title>
+    <title>QueryPilot - Performance Advisor</title>
+    <script>
+      window.addEventListener('error', function(e) {
+        document.body.innerHTML = '<div style="color:#b91c1c;padding:24px;font-family:monospace;background:#fef2f2;min-height:100vh;word-break:break-all;"><h3>Mobile Startup Error:</h3><pre>' + (e.error ? (e.error.stack || e.error.message) : e.message) + '</pre><p>File: ' + e.filename + ':' + e.lineno + '</p></div>';
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        document.body.innerHTML = '<div style="color:#b91c1c;padding:24px;font-family:monospace;background:#fef2f2;min-height:100vh;word-break:break-all;"><h3>Promise Error:</h3><pre>' + (e.reason ? (e.reason.stack || e.reason.message) : e.reason) + '</pre></div>';
+      });
+    </script>
   </head>
-  <body>
+  <body style="margin: 0; background-color: #0b1325;">
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
