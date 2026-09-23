@@ -93,19 +93,39 @@ export default function App() {
     return val.email || val.username || "User";
   };
 
+  const getStorageKey = (prefix) => {
+    const user = getDisplayName(currentUser);
+    return `${prefix}_${user.toLowerCase().replace(/[^a-z0-9]/g, "_")}`;
+  };
+
   const handleLogout = () => {
     localStorage.removeItem("advisor_token");
     localStorage.removeItem("advisor_user");
     setCurrentUser(null);
     setReport(null);
+    setReports([]);
+    setStats({ total: 0, averageScore: 0, highRisk: 0 });
     setShowAuth(false);
   };
 
   const loadReportsAndStats = async () => {
     if (!currentUser) return;
+    const userParam = encodeURIComponent(getDisplayName(currentUser));
+    const localReportsKey = getStorageKey("advisor_reports");
+    const localStatsKey = getStorageKey("advisor_stats");
+
+    // Load local cache immediately so history is per-user even offline
+    const localReports = JSON.parse(localStorage.getItem(localReportsKey) || "[]");
+    const localStats = JSON.parse(
+      localStorage.getItem(localStatsKey) ||
+        JSON.stringify({ total: 0, averageScore: 0, highRisk: 0 })
+    );
+
+    setReports(localReports);
+    setStats(localStats);
+
     try {
       setRefreshing(true);
-      const userParam = encodeURIComponent(getDisplayName(currentUser));
       const [resReports, resStats] = await Promise.all([
         fetch(`${API}/reports?userEmail=${userParam}`),
         fetch(`${API}/stats?userEmail=${userParam}`),
@@ -114,10 +134,17 @@ export default function App() {
       const dataReports = await resReports.json();
       const dataStats = await resStats.json();
 
-      if (dataReports.ok) setReports(dataReports.reports || []);
-      if (dataStats.ok) setStats(dataStats);
+      if (dataReports.ok && Array.isArray(dataReports.reports)) {
+        // Merge without cross-pollinating
+        setReports(dataReports.reports);
+        localStorage.setItem(localReportsKey, JSON.stringify(dataReports.reports));
+      }
+      if (dataStats.ok) {
+        setStats(dataStats);
+        localStorage.setItem(localStatsKey, JSON.stringify(dataStats));
+      }
     } catch (err) {
-      console.error("Error fetching scoped data from MongoDB:", err);
+      console.warn("Backend scoped sync skipped; using local per-user history.");
     } finally {
       setRefreshing(false);
     }
@@ -129,7 +156,6 @@ export default function App() {
       const d = await r.json();
       setHealth(!!d.mongodb);
     } catch (err) {
-      console.error("Health check failed:", err);
       setHealth(false);
     }
   };
@@ -152,13 +178,20 @@ export default function App() {
       const d = await r.json();
       if (d.ok) {
         setReport(d.report);
+
+        // Save into isolated per-user local cache
+        const localKey = getStorageKey("advisor_reports");
+        const currentLocal = JSON.parse(localStorage.getItem(localKey) || "[]");
+        const updated = [d.report, ...currentLocal.filter((item) => item._id !== d.report._id)];
+        localStorage.setItem(localKey, JSON.stringify(updated));
+
         await loadReportsAndStats();
       } else {
         alert(`Analysis error: ${d.error}`);
       }
     } catch (e) {
       console.error("Analysis request failed:", e);
-      alert("Backend not reachable. Ensure Express is running on port 5000.");
+      alert("Backend not reachable. Ensure Express is running.");
     } finally {
       setLoading(false);
     }
@@ -333,7 +366,10 @@ export default function App() {
     return (
       <AuthScreen
         initialMode={initialAuthMode}
-        onLoginSuccess={(email) => setCurrentUser(email)}
+        onLoginSuccess={(email) => {
+          setCurrentUser(email);
+          setShowAuth(false);
+        }}
         onBackToWelcome={() => setShowAuth(false)}
       />
     );
@@ -378,7 +414,17 @@ export default function App() {
             </div>
           </div>
 
-          <label style={{ fontSize: "11px", color: "#64748b", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: "10px" }}>
+          <label
+            style={{
+              fontSize: "11px",
+              color: "#64748b",
+              fontWeight: "600",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              display: "block",
+              marginBottom: "10px",
+            }}
+          >
             Navigation
           </label>
 
@@ -779,7 +825,7 @@ export default function App() {
               <div className="head">
                 <div>
                   <h2>Recent Reports</h2>
-                  <small>Stored in MongoDB for {getDisplayName(currentUser)}</small>
+                  <small>Scoped to {getDisplayName(currentUser)}</small>
                 </div>
                 <button onClick={loadReportsAndStats} disabled={refreshing}>
                   <RefreshCw size={15} className={refreshing ? "animate-spin" : ""} />{" "}
@@ -1029,7 +1075,7 @@ function DashboardView({ stats, reports, refreshing, onRefresh, onSelectQuery })
   const filteredReports = reports.filter((r) => {
     const matchesSearch = (r.sql || "").toLowerCase().includes(searchTerm.toLowerCase());
     const matchesRisk =
-      riskFilter === "ALL" || (r.analysis?.riskLevel?.toUpperCase() === riskFilter);
+      riskFilter === "ALL" || r.analysis?.riskLevel?.toUpperCase() === riskFilter;
     return matchesSearch && matchesRisk;
   });
 
@@ -1274,7 +1320,7 @@ function DashboardView({ stats, reports, refreshing, onRefresh, onSelectQuery })
         <div className="head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
           <div>
             <h2 style={{ fontSize: "16px", margin: "0 0 4px 0" }}>Recent Reports</h2>
-            <small style={{ color: "#64748b" }}>Stored in MongoDB audit log</small>
+            <small style={{ color: "#64748b" }}>Scoped to {getDisplayName(currentUser)}</small>
           </div>
           <button
             onClick={onRefresh}
@@ -1417,14 +1463,29 @@ function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) 
     setSuccess("");
     setSubmitting(true);
 
-    let endpoint = "/auth/login";
-    let payload = { email, password };
+    const loginId = email.trim();
 
-    if (mode === "register") {
-      endpoint = "/auth/register";
-    } else if (mode === "forgot") {
+    // DEMO LOGIN BYPASS: Accepts any non-empty username/email & password
+    if (mode === "login") {
+      if (!loginId || !password.trim()) {
+        setError("Enter a login ID/email and password.");
+        setSubmitting(false);
+        return;
+      }
+
+      localStorage.setItem("advisor_token", "demo-token");
+      localStorage.setItem("advisor_user", loginId);
+      onLoginSuccess(loginId);
+      setSubmitting(false);
+      return;
+    }
+
+    let endpoint = "/auth/register";
+    let payload = { email: loginId, password };
+
+    if (mode === "forgot") {
       endpoint = "/auth/reset-password";
-      payload = { email, newPassword: password };
+      payload = { email: loginId, newPassword: password };
     }
 
     try {
@@ -1450,7 +1511,7 @@ function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) 
         setError(data.error || "Operation failed");
       }
     } catch (err) {
-      setError("Cannot reach backend server. Ensure port 5000 is active.");
+      setError("Cannot reach backend server. Ensure backend is active.");
     } finally {
       setSubmitting(false);
     }
@@ -1512,7 +1573,7 @@ function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) 
         </div>
 
         <h3 style={{ margin: "0 0 6px 0", fontSize: "16px", color: "#cbd5e1" }}>
-          {mode === "login" && "Sign in to your account"}
+          {mode === "login" && "Sign in to your account (Demo Mode)"}
           {mode === "register" && "Create a new account"}
           {mode === "forgot" && "Reset your password"}
         </h3>
@@ -1557,14 +1618,14 @@ function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) 
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
           <div>
             <label style={{ display: "block", fontSize: "12px", color: "#94a3b8", marginBottom: "6px" }}>
-              Email Address
+              Username or Email
             </label>
             <div style={{ position: "relative" }}>
               <Mail size={16} color="#64748b" style={{ position: "absolute", left: "12px", top: "12px" }} />
               <input
-                type="email"
+                type="text"
                 required
-                placeholder="name@company.com"
+                placeholder={mode === "login" ? "e.g. abc or user@example.com" : "name@company.com"}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 style={{
