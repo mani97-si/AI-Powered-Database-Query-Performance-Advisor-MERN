@@ -27,6 +27,26 @@ import {
 } from "lucide-react";
 
 const API = "https://ai-powered-database-query-performance.onrender.com/api";
+
+// TOP-LEVEL SCOPED HELPERS (Prevents ReferenceError on any device)
+const getDisplayName = (val) => {
+  if (!val) return "User";
+  if (typeof val === "string") {
+    try {
+      const parsed = JSON.parse(val);
+      return parsed.email || parsed.username || parsed.id || val;
+    } catch {
+      return val;
+    }
+  }
+  return val.email || val.username || "User";
+};
+
+const getStorageKey = (prefix, currentUser) => {
+  const user = getDisplayName(currentUser);
+  return `${prefix}_${String(user).toLowerCase().replace(/[^a-z0-9]/g, "_")}`;
+};
+
 const SAMPLE_DEFAULT = `SELECT *
 FROM orders o
 JOIN customers c ON o.customer_id = c.id
@@ -75,7 +95,7 @@ export default function App() {
 
   const [showAuth, setShowAuth] = useState(false);
   const [initialAuthMode, setInitialAuthMode] = useState("login");
-  const [activeTab, setActiveTab] = useState("workbench"); // "workbench" | "dashboard"
+  const [activeTab, setActiveTab] = useState("workbench");
   const [sql, setSql] = useState(SAMPLE_DEFAULT);
   const [report, setReport] = useState(null);
   const [reports, setReports] = useState([]);
@@ -84,24 +104,6 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [copied, setCopied] = useState(false);
-
-  const getDisplayName = (val) => {
-    if (!val) return "User";
-    if (typeof val === "string") {
-      try {
-        const parsed = JSON.parse(val);
-        return parsed.email || parsed.username || parsed.id || val;
-      } catch {
-        return val;
-      }
-    }
-    return val.email || val.username || "User";
-  };
-
-  const getStorageKey = (prefix) => {
-    const user = getDisplayName(currentUser);
-    return `${prefix}_${String(user).toLowerCase().replace(/[^a-z0-9]/g, "_")}`;
-  };
 
   const handleLogout = () => {
     try {
@@ -118,8 +120,8 @@ export default function App() {
   const loadReportsAndStats = async () => {
     if (!currentUser) return;
     const userParam = encodeURIComponent(getDisplayName(currentUser));
-    const localReportsKey = getStorageKey("advisor_reports");
-    const localStatsKey = getStorageKey("advisor_stats");
+    const localReportsKey = getStorageKey("advisor_reports", currentUser);
+    const localStatsKey = getStorageKey("advisor_stats", currentUser);
 
     let localReports = [];
     let localStats = { total: 0, averageScore: 0, highRisk: 0 };
@@ -170,7 +172,7 @@ export default function App() {
         } catch (e) {}
       }
     } catch (err) {
-      console.warn("Backend scoped sync skipped; using local per-user history.");
+      console.warn("Backend scoped sync skipped; using local store.");
     } finally {
       setRefreshing(false);
     }
@@ -206,7 +208,7 @@ export default function App() {
         setReport(d.report);
 
         try {
-          const localKey = getStorageKey("advisor_reports");
+          const localKey = getStorageKey("advisor_reports", currentUser);
           const raw = localStorage.getItem(localKey);
           const currentLocal = raw ? JSON.parse(raw) : [];
           const list = Array.isArray(currentLocal) ? currentLocal : [];
@@ -474,7 +476,6 @@ export default function App() {
                 cursor: "pointer",
                 background: activeTab === "workbench" ? "#2563eb" : "transparent",
                 color: activeTab === "workbench" ? "#ffffff" : "#94a3b8",
-                transition: "all 0.15s ease",
               }}
             >
               <Terminal size={16} /> Workbench
@@ -498,7 +499,6 @@ export default function App() {
                 cursor: "pointer",
                 background: activeTab === "dashboard" ? "#2563eb" : "transparent",
                 color: activeTab === "dashboard" ? "#ffffff" : "#94a3b8",
-                transition: "all 0.15s ease",
               }}
             >
               <BarChart3 size={16} /> Analytics Dashboard
@@ -595,16 +595,10 @@ export default function App() {
                 </p>
               </div>
 
-              {/* Quick Test Sample Queries */}
               <div className="heroStats" style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
                 <div
                   onClick={() => setSql(SAMPLE_EXPLAINABLE)}
-                  style={{
-                    cursor: "pointer",
-                    transition: "all 0.2s ease",
-                    border: "1px solid #334155",
-                    userSelect: "none",
-                  }}
+                  style={{ cursor: "pointer", border: "1px solid #334155", userSelect: "none" }}
                   title="Click to load Explainable AI sample query"
                 >
                   <Activity color="#38bdf8" />
@@ -614,12 +608,7 @@ export default function App() {
 
                 <div
                   onClick={() => setSql(SAMPLE_DBA)}
-                  style={{
-                    cursor: "pointer",
-                    transition: "all 0.2s ease",
-                    border: "1px solid #334155",
-                    userSelect: "none",
-                  }}
+                  style={{ cursor: "pointer", border: "1px solid #334155", userSelect: "none" }}
                   title="Click to load DBA index sample query"
                 >
                   <ShieldCheck color="#10b981" />
@@ -629,12 +618,7 @@ export default function App() {
 
                 <div
                   onClick={() => setSql(SAMPLE_MEDIUM)}
-                  style={{
-                    cursor: "pointer",
-                    transition: "all 0.2s ease",
-                    border: "1px solid #334155",
-                    userSelect: "none",
-                  }}
+                  style={{ cursor: "pointer", border: "1px solid #334155", userSelect: "none" }}
                   title="Click to load Aggregation / Medium Risk query"
                 >
                   <Gauge color="#f59e0b" />
@@ -644,12 +628,7 @@ export default function App() {
 
                 <div
                   onClick={() => setSql(SAMPLE_SUBQUERY)}
-                  style={{
-                    cursor: "pointer",
-                    transition: "all 0.2s ease",
-                    border: "1px solid #334155",
-                    userSelect: "none",
-                  }}
+                  style={{ cursor: "pointer", border: "1px solid #334155", userSelect: "none" }}
                   title="Click to load Nested Subquery test"
                 >
                   <Layers color="#a855f7" />
@@ -715,7 +694,6 @@ export default function App() {
               </div>
             </section>
 
-            {/* AI-CORRECTED QUERY DISPLAY CARD */}
             {report?.analysis?.correctedQuery && (
               <section
                 className="card"
@@ -732,7 +710,7 @@ export default function App() {
                     </div>
                     <div>
                       <h2 style={{ color: "#34d399", margin: 0 }}>AI-Recommended Corrected Query</h2>
-                      <small>Optimized to avoid full-table scans, non-sargable predicates, and I/O bloat</small>
+                      <small>Optimized to avoid full-table scans and non-sargable predicates</small>
                     </div>
                   </div>
 
@@ -793,17 +771,6 @@ export default function App() {
                 >
                   {report.analysis.correctedQuery}
                 </pre>
-
-                {report.analysis.rewritesApplied?.length > 0 && (
-                  <div style={{ marginTop: "8px", fontSize: "12px", color: "#94a3b8" }}>
-                    <b>Optimizations applied:</b>
-                    <ul style={{ margin: "4px 0 0 16px", padding: 0 }}>
-                      {report.analysis.rewritesApplied.map((r, i) => (
-                        <li key={i}>{r}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
               </section>
             )}
 
@@ -921,15 +888,12 @@ function WelcomeScreen({ onGetStarted, onRegister }) {
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              boxShadow: "0 0 16px rgba(37, 99, 235, 0.4)",
             }}
           >
             <Zap size={22} color="#ffffff" />
           </div>
           <div>
-            <h1 style={{ fontSize: "18px", fontWeight: "bold", margin: 0, letterSpacing: "-0.3px" }}>
-              QueryPilot
-            </h1>
+            <h1 style={{ fontSize: "18px", fontWeight: "bold", margin: 0 }}>QueryPilot</h1>
             <span style={{ fontSize: "11px", color: "#64748b" }}>Query Performance Advisor</span>
           </div>
         </div>
@@ -944,7 +908,6 @@ function WelcomeScreen({ onGetStarted, onRegister }) {
               padding: "8px 18px",
               borderRadius: "8px",
               fontSize: "13px",
-              fontWeight: "500",
               cursor: "pointer",
             }}
           >
@@ -961,7 +924,6 @@ function WelcomeScreen({ onGetStarted, onRegister }) {
               fontSize: "13px",
               fontWeight: "600",
               cursor: "pointer",
-              boxShadow: "0 0 14px rgba(37, 99, 235, 0.35)",
             }}
           >
             Get Started Free
@@ -970,55 +932,18 @@ function WelcomeScreen({ onGetStarted, onRegister }) {
       </header>
 
       <main style={{ maxWidth: "1080px", margin: "0 auto", padding: "60px 24px", textAlign: "center" }}>
-        <div
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "8px",
-            background: "#1e293b",
-            border: "1px solid #334155",
-            padding: "6px 14px",
-            borderRadius: "20px",
-            fontSize: "12px",
-            color: "#38bdf8",
-            marginBottom: "24px",
-          }}
-        >
-          <Wand2 size={14} color="#38bdf8" />
-          <span>Intelligent Full-Stack Query Optimizer & Health Monitor</span>
-        </div>
-
-        <h1
-          style={{
-            fontSize: "44px",
-            fontWeight: 800,
-            lineHeight: 1.2,
-            margin: "0 0 18px 0",
-            letterSpacing: "-0.8px",
-          }}
-        >
+        <h1 style={{ fontSize: "44px", fontWeight: 800, margin: "0 0 18px 0" }}>
           Welcome to <span style={{ color: "#38bdf8" }}>Query Advisor</span>
         </h1>
-        <p
-          style={{
-            fontSize: "16px",
-            color: "#94a3b8",
-            maxWidth: "680px",
-            margin: "0 auto 36px auto",
-            lineHeight: 1.6,
-          }}
-        >
+        <p style={{ fontSize: "16px", color: "#94a3b8", maxWidth: "680px", margin: "0 auto 36px auto" }}>
           Diagnose database bottlenecks, eliminate full table scans, generate DBA-ready composite
-          indexes, and inspect AI-corrected SQL queries with verified risk calculations.
+          indexes, and inspect AI-corrected SQL queries.
         </p>
 
-        <div style={{ display: "flex", justifyContent: "center", gap: "16px", marginBottom: "64px" }}>
+        <div style={{ display: "flex", justifyContent: "center", gap: "16px" }}>
           <button
             onClick={onGetStarted}
             style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "8px",
               background: "#2563eb",
               border: "none",
               color: "#ffffff",
@@ -1027,66 +952,15 @@ function WelcomeScreen({ onGetStarted, onRegister }) {
               fontSize: "14px",
               fontWeight: "600",
               cursor: "pointer",
-              boxShadow: "0 4px 18px rgba(37, 99, 235, 0.4)",
             }}
           >
-            Launch Advisor <ChevronRight size={16} />
+            Launch Advisor →
           </button>
-          <button
-            onClick={onRegister}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "8px",
-              background: "#1e293b",
-              border: "1px solid #334155",
-              color: "#cbd5e1",
-              padding: "12px 24px",
-              borderRadius: "8px",
-              fontSize: "14px",
-              fontWeight: "500",
-              cursor: "pointer",
-            }}
-          >
-            Create an Account
-          </button>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "20px", textAlign: "left" }}>
-          <div style={{ background: "#111a2e", border: "1px solid #1e293b", borderRadius: "12px", padding: "24px" }}>
-            <div style={{ width: "36px", height: "36px", background: "#064e3b", borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "14px" }}>
-              <ShieldCheck size={20} color="#34d399" />
-            </div>
-            <h3 style={{ fontSize: "16px", margin: "0 0 6px 0", color: "#f8fafc" }}>Rule-Based Static Analysis</h3>
-            <p style={{ fontSize: "13px", color: "#94a3b8", margin: 0, lineHeight: 1.5 }}>
-              Detect non-sargable wildcards, missing joins, and unindexed column predicates before they hit production.
-            </p>
-          </div>
-
-          <div style={{ background: "#111a2e", border: "1px solid #1e293b", borderRadius: "12px", padding: "24px" }}>
-            <div style={{ width: "36px", height: "36px", background: "#1e3a5f", borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "14px" }}>
-              <Database size={20} color="#38bdf8" />
-            </div>
-            <h3 style={{ fontSize: "16px", margin: "0 0 6px 0", color: "#f8fafc" }}>DBA Index Recommendations</h3>
-            <p style={{ fontSize: "13px", color: "#94a3b8", margin: 0, lineHeight: 1.5 }}>
-              Receive instant index syntax for foreign keys and filtering columns to drop buffer I/O and query latency.
-            </p>
-          </div>
-
-          <div style={{ background: "#111a2e", border: "1px solid #1e293b", borderRadius: "12px", padding: "24px" }}>
-            <div style={{ width: "36px", height: "36px", background: "#3b1e3f", borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "14px" }}>
-              <BarChart3 size={20} color="#c084fc" />
-            </div>
-            <h3 style={{ fontSize: "16px", margin: "0 0 6px 0", color: "#f8fafc" }}>Workload Health Dashboard</h3>
-            <p style={{ fontSize: "13px", color: "#94a3b8", margin: 0, lineHeight: 1.5 }}>
-              Log session audit queries into MongoDB, visualize workload risk distribution, and export DBA PDF reports.
-            </p>
-          </div>
         </div>
       </main>
 
       <footer style={{ borderTop: "1px solid #1e293b", padding: "20px 48px", textAlign: "center", fontSize: "12px", color: "#64748b" }}>
-        QueryPilot • AI-Powered Database Query Performance Advisor
+        QueryPilot • Full-Stack Query Performance Advisor
       </footer>
     </div>
   );
@@ -1096,83 +970,20 @@ function WelcomeScreen({ onGetStarted, onRegister }) {
 
 function DashboardView({ stats, reports, refreshing, onRefresh, onSelectQuery }) {
   const [searchTerm, setSearchTerm] = useState("");
-  const [riskFilter, setRiskFilter] = useState("ALL");
-
   const lowRiskCount = reports.filter((r) => r.analysis?.riskLevel === "Low").length;
   const mediumRiskCount = reports.filter((r) => r.analysis?.riskLevel === "Medium").length;
   const highRiskCount = stats.highRisk || reports.filter((r) => r.analysis?.riskLevel === "High").length;
 
-  const filteredReports = reports.filter((r) => {
-    const matchesSearch = (r.sql || "").toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesRisk =
-      riskFilter === "ALL" || r.analysis?.riskLevel?.toUpperCase() === riskFilter;
-    return matchesSearch && matchesRisk;
-  });
-
-  const estimatedSavings = Math.min(
-    95,
-    Math.max(10, Math.round(highRiskCount * 24 + mediumRiskCount * 12))
+  const filteredReports = reports.filter((r) =>
+    (r.sql || "").toLowerCase().includes(searchTerm.toLowerCase())
   );
-
-  const downloadReportPDF = (r) => {
-    const a = r.analysis;
-    if (!a) return alert("Analysis details unavailable for this report.");
-
-    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const margin = 14;
-    const contentWidth = pageWidth - margin * 2;
-    let y = 18;
-
-    doc.setFillColor(15, 23, 42);
-    doc.rect(0, 0, pageWidth, 24, "F");
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
-    doc.setTextColor(255, 255, 255);
-    doc.text("AI Query Performance Advisor - Optimization Report", margin, 11);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(148, 163, 184);
-    doc.text(`Generated: ${new Date(r.createdAt).toLocaleString()} | Title: ${r.title || "SQL Analysis"}`, margin, 18);
-
-    y = 32;
-    doc.setFillColor(248, 250, 252);
-    doc.setDrawColor(226, 232, 240);
-    doc.roundedRect(margin, y, contentWidth, 20, 2, 2, "FD");
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(15, 23, 42);
-    doc.text(`Score: ${a.performanceScore || 0}/100`, margin + 5, y + 8);
-    doc.text(`Risk: ${a.riskLevel || "Low"}`, margin + 55, y + 8);
-    doc.text(`Query Type: ${a.queryType || "SELECT"}`, margin + 110, y + 8);
-
-    y += 28;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10.5);
-    doc.setTextColor(15, 23, 42);
-    doc.text("SQL Query:", margin, y);
-    y += 5;
-
-    doc.setFont("courier", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(14, 116, 144);
-    const sqlLines = doc.splitTextToSize(r.sql || "", contentWidth);
-    doc.text(sqlLines, margin, y);
-
-    doc.save(`report-${r._id || Date.now()}.pdf`);
-  };
 
   return (
     <main style={{ padding: "28px 36px", maxWidth: "1200px", width: "100%", boxSizing: "border-box" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
         <div>
-          <h1 style={{ margin: "0 0 6px 0", fontSize: "22px" }}>Advisor Health & Workload Dashboard</h1>
-          <p style={{ margin: 0, color: "#94a3b8", fontSize: "14px" }}>
-            Aggregated diagnostic insights and workload analysis from MongoDB
-          </p>
+          <h1 style={{ margin: "0 0 6px 0", fontSize: "22px" }}>Health & Workload Dashboard</h1>
+          <p style={{ margin: 0, color: "#94a3b8", fontSize: "14px" }}>MongoDB Aggregated Performance</p>
         </div>
         <button
           onClick={onRefresh}
@@ -1194,250 +1005,74 @@ function DashboardView({ stats, reports, refreshing, onRefresh, onSelectQuery })
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "16px", marginBottom: "24px" }}>
-        <DashboardCard
-          title="Total Queries Analyzed"
-          value={stats.total || reports.length}
-          icon={<Layers color="#38bdf8" size={24} />}
-          detail="Stored across your workload sessions"
-        />
-        <DashboardCard
-          title="Avg Performance Score"
-          value={`${stats.averageScore || 0} / 100`}
-          icon={<Gauge color="#10b981" size={24} />}
-          detail="Computed across your queries"
-        />
-        <DashboardCard
-          title="Critical Bottlenecks"
-          value={highRiskCount}
-          icon={<ShieldAlert color="#ef4444" size={24} />}
-          detail="Queries marked High Risk"
-        />
-        <DashboardCard
-          title="Est. Disk I/O Savings"
-          value={`~${estimatedSavings}%`}
-          icon={<TrendingDown color="#34d399" size={24} />}
-          detail="Projected reduction after indexing"
-        />
+        <DashboardCard title="Total Queries" value={stats.total || reports.length} icon={<Layers color="#38bdf8" size={24} />} detail="Audited sessions" />
+        <DashboardCard title="Avg Score" value={`${stats.averageScore || 0} / 100`} icon={<Gauge color="#10b981" size={24} />} detail="Across your queries" />
+        <DashboardCard title="High Risk Queries" value={highRiskCount} icon={<ShieldAlert color="#ef4444" size={24} />} detail="Requires indexing" />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: "20px", marginBottom: "24px" }}>
-        <div className="card" style={{ padding: "20px" }}>
-          <h3 style={{ margin: "0 0 16px 0", fontSize: "16px" }}>Risk Distribution</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-            <RiskProgressBar label="Low Risk" count={lowRiskCount} total={reports.length} color="#10b981" />
-            <RiskProgressBar label="Medium Risk" count={mediumRiskCount} total={reports.length} color="#f59e0b" />
-            <RiskProgressBar label="High Risk" count={highRiskCount} total={reports.length} color="#ef4444" />
-          </div>
-
-          <div style={{ marginTop: "20px", paddingTop: "14px", borderTop: "1px solid #334155" }}>
-            <small style={{ color: "#64748b", textTransform: "uppercase", fontWeight: "600" }}>System Advisor Summary</small>
-            <p style={{ margin: "6px 0 0 0", fontSize: "12px", color: "#cbd5e1", lineHeight: "1.4" }}>
-              {highRiskCount > 0
-                ? `${highRiskCount} query workloads require covering indexes to prevent disk spills.`
-                : "Your analyzed queries currently adhere to standard index patterns."}
-            </p>
-          </div>
-        </div>
-
-        <div className="card" style={{ padding: "20px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
-            <h3 style={{ margin: 0, fontSize: "16px" }}>Analyzed Workload History</h3>
-
-            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-              <div style={{ position: "relative" }}>
-                <Search size={14} color="#64748b" style={{ position: "absolute", left: "8px", top: "8px" }} />
-                <input
-                  type="text"
-                  placeholder="Search queries..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  style={{
-                    background: "#0f172a",
-                    border: "1px solid #334155",
-                    borderRadius: "4px",
-                    padding: "6px 8px 6px 28px",
-                    fontSize: "12px",
-                    color: "#f8fafc",
-                    width: "130px",
-                    outline: "none",
-                  }}
-                />
-              </div>
-
-              <select
-                value={riskFilter}
-                onChange={(e) => setRiskFilter(e.target.value)}
-                style={{
-                  background: "#0f172a",
-                  border: "1px solid #334155",
-                  borderRadius: "4px",
-                  padding: "6px 8px",
-                  fontSize: "12px",
-                  color: "#94a3b8",
-                  outline: "none",
-                  cursor: "pointer",
-                }}
-              >
-                <option value="ALL">All Risks</option>
-                <option value="HIGH">High</option>
-                <option value="MEDIUM">Medium</option>
-                <option value="LOW">Low</option>
-              </select>
-            </div>
-          </div>
-
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", textAlign: "left" }}>
-              <thead>
-                <tr style={{ borderBottom: "1px solid #334155", color: "#94a3b8" }}>
-                  <th style={{ padding: "8px 10px" }}>SQL Snippet</th>
-                  <th style={{ padding: "8px 10px" }}>Score</th>
-                  <th style={{ padding: "8px 10px" }}>Risk</th>
-                  <th style={{ padding: "8px 10px" }}>Timestamp</th>
-                  <th style={{ padding: "8px 10px" }}>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredReports.slice(0, 7).map((r, i) => (
-                  <tr key={i} style={{ borderBottom: "1px solid #1e293b" }}>
-                    <td style={{ padding: "10px", fontFamily: "monospace", color: "#38bdf8", maxWidth: "230px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {r.sql}
-                    </td>
-                    <td style={{ padding: "10px", fontWeight: "bold" }}>
-                      {r.analysis?.performanceScore || 0}
-                    </td>
-                    <td style={{ padding: "10px" }}>
-                      <span className={"pill " + (r.analysis?.riskLevel?.toLowerCase() || "low")}>
-                        {r.analysis?.riskLevel || "Low"}
-                      </span>
-                    </td>
-                    <td style={{ padding: "10px", color: "#64748b" }}>
-                      {new Date(r.createdAt).toLocaleDateString()}
-                    </td>
-                    <td style={{ padding: "10px" }}>
-                      <button
-                        onClick={() => onSelectQuery(r.sql)}
-                        style={{
-                          background: "#2563eb",
-                          border: "none",
-                          color: "#fff",
-                          padding: "4px 8px",
-                          borderRadius: "4px",
-                          cursor: "pointer",
-                          fontSize: "11px",
-                        }}
-                      >
-                        Load Query
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {!filteredReports.length && (
-                  <tr>
-                    <td colSpan="5" style={{ padding: "20px", textAlign: "center", color: "#64748b" }}>
-                      No matching query workloads found.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      {/* ---------------- RECENT REPORTS SECTION (BELOW DASHBOARD) ---------------- */}
-      <section className="card history" style={{ padding: "20px" }}>
-        <div className="head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-          <div>
-            <h2 style={{ fontSize: "16px", margin: "0 0 4px 0" }}>Recent Reports</h2>
-            <small style={{ color: "#64748b" }}>Scoped to {getDisplayName(currentUser)}</small>
-          </div>
-          <button
-            onClick={onRefresh}
-            disabled={refreshing}
+      <div className="card" style={{ padding: "20px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <h3 style={{ margin: 0, fontSize: "16px" }}>Query Workload History</h3>
+          <input
+            type="text"
+            placeholder="Search queries..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
             style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "6px",
-              padding: "6px 12px",
-              background: "#1e293b",
-              color: "#ffffff",
+              background: "#0f172a",
               border: "1px solid #334155",
-              borderRadius: "6px",
-              cursor: "pointer",
+              borderRadius: "4px",
+              padding: "6px 10px",
               fontSize: "12px",
+              color: "#f8fafc",
             }}
-          >
-            <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />{" "}
-            {refreshing ? "Refreshing..." : "Refresh"}
-          </button>
+          />
         </div>
 
-        {reports.length ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-            {reports.map((r, i) => (
-              <div
-                key={i}
-                className="historyRow"
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: "12px 16px",
-                  background: "#0f172a",
-                  border: "1px solid #1e293b",
-                  borderRadius: "8px",
-                }}
-              >
-                <div>
-                  <b style={{ color: "#f8fafc", fontSize: "13px", display: "block" }}>{r.title || "SQL Performance Audit"}</b>
-                  <span style={{ color: "#64748b", fontSize: "11px" }}>
-                    {new Date(r.createdAt).toLocaleString()} • Score {r.analysis?.performanceScore || 0}/100 • Risk: {r.analysis?.riskLevel || "Low"}
-                  </span>
-                </div>
-
-                <div style={{ display: "flex", gap: "8px" }}>
-                  <button
-                    onClick={() => onSelectQuery(r.sql)}
-                    style={{
-                      background: "#1e293b",
-                      border: "1px solid #334155",
-                      color: "#38bdf8",
-                      padding: "6px 10px",
-                      borderRadius: "4px",
-                      cursor: "pointer",
-                      fontSize: "11px",
-                    }}
-                  >
-                    Load in Workbench
-                  </button>
-                  <button
-                    onClick={() => downloadReportPDF(r)}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "4px",
-                      background: "#2563eb",
-                      border: "none",
-                      color: "#ffffff",
-                      padding: "6px 10px",
-                      borderRadius: "4px",
-                      cursor: "pointer",
-                      fontSize: "11px",
-                    }}
-                  >
-                    <Download size={13} /> PDF
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="empty" style={{ textAlign: "center", padding: "24px", color: "#64748b" }}>
-            No saved reports found for your account.
-          </div>
-        )}
-      </section>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", textAlign: "left" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid #334155", color: "#94a3b8" }}>
+                <th style={{ padding: "8px 10px" }}>SQL Snippet</th>
+                <th style={{ padding: "8px 10px" }}>Score</th>
+                <th style={{ padding: "8px 10px" }}>Risk</th>
+                <th style={{ padding: "8px 10px" }}>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredReports.slice(0, 10).map((r, i) => (
+                <tr key={i} style={{ borderBottom: "1px solid #1e293b" }}>
+                  <td style={{ padding: "10px", fontFamily: "monospace", color: "#38bdf8", maxWidth: "230px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {r.sql}
+                  </td>
+                  <td style={{ padding: "10px", fontWeight: "bold" }}>{r.analysis?.performanceScore || 0}</td>
+                  <td style={{ padding: "10px" }}>
+                    <span className={"pill " + (r.analysis?.riskLevel?.toLowerCase() || "low")}>
+                      {r.analysis?.riskLevel || "Low"}
+                    </span>
+                  </td>
+                  <td style={{ padding: "10px" }}>
+                    <button
+                      onClick={() => onSelectQuery(r.sql)}
+                      style={{
+                        background: "#2563eb",
+                        border: "none",
+                        color: "#fff",
+                        padding: "4px 8px",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        fontSize: "11px",
+                      }}
+                    >
+                      Load
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </main>
   );
 }
@@ -1455,101 +1090,27 @@ function DashboardCard({ title, value, icon, detail }) {
   );
 }
 
-function RiskProgressBar({ label, count, total, color }) {
-  const percentage = total > 0 ? Math.round((count / total) * 100) : 0;
-  return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", marginBottom: "4px" }}>
-        <span>{label}</span>
-        <span>{count} ({percentage}%)</span>
-      </div>
-      <div style={{ width: "100%", height: "8px", background: "#0f172a", borderRadius: "4px", overflow: "hidden" }}>
-        <div style={{ width: `${percentage}%`, height: "100%", background: color }} />
-      </div>
-    </div>
-  );
-}
-
 // ---------------- AUTHENTICATION SCREEN ---------------- //
 
 function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) {
-  const [mode, setMode] = useState(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-  const [submitting, setSubmitting] = useState(false);
 
-  const resetState = (newMode) => {
-    setMode(newMode);
-    setError("");
-    setSuccess("");
-    setPassword("");
-  };
-
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
-    setError("");
-    setSuccess("");
-    setSubmitting(true);
-
     const loginId = email.trim();
-
-    // DEMO LOGIN BYPASS: Accepts any non-empty username/email & password
-    if (mode === "login") {
-      if (!loginId || !password.trim()) {
-        setError("Enter a login ID/email and password.");
-        setSubmitting(false);
-        return;
-      }
-
-      try {
-        localStorage.setItem("advisor_token", "demo-token");
-        localStorage.setItem("advisor_user", loginId);
-      } catch (err) {}
-
-      onLoginSuccess(loginId);
-      setSubmitting(false);
+    if (!loginId || !password.trim()) {
+      setError("Enter a username/email and password.");
       return;
     }
 
-    let endpoint = "/auth/register";
-    let payload = { email: loginId, password };
-
-    if (mode === "forgot") {
-      endpoint = "/auth/reset-password";
-      payload = { email: loginId, newPassword: password };
-    }
-
     try {
-      const res = await fetch(`${API}${endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      localStorage.setItem("advisor_token", "demo-token");
+      localStorage.setItem("advisor_user", loginId);
+    } catch (err) {}
 
-      const data = await res.json();
-
-      if (data.ok) {
-        if (mode === "forgot") {
-          setSuccess(data.message || "Password updated successfully! Please sign in.");
-          setMode("login");
-          setPassword("");
-        } else {
-          try {
-            localStorage.setItem("advisor_token", data.token);
-            localStorage.setItem("advisor_user", data.email);
-          } catch (err) {}
-          onLoginSuccess(data.email);
-        }
-      } else {
-        setError(data.error || "Operation failed");
-      }
-    } catch (err) {
-      setError("Cannot reach backend server. Ensure backend is active.");
-    } finally {
-      setSubmitting(false);
-    }
+    onLoginSuccess(loginId);
   };
 
   return (
@@ -1570,83 +1131,25 @@ function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) 
           padding: "36px",
           width: "100%",
           maxWidth: "400px",
-          boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.5)",
           border: "1px solid #334155",
           color: "#f8fafc",
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            <div
-              style={{
-                background: "#3b82f6",
-                padding: "8px",
-                borderRadius: "8px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <Zap size={22} color="#ffffff" />
-            </div>
+            <Zap size={22} color="#3b82f6" />
             <h2 style={{ margin: 0, fontSize: "20px" }}>QueryPilot</h2>
           </div>
-
-          <button
-            onClick={onBackToWelcome}
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "#64748b",
-              fontSize: "12px",
-              cursor: "pointer",
-              padding: "4px 8px",
-            }}
-          >
+          <button onClick={onBackToWelcome} style={{ background: "transparent", border: "none", color: "#64748b", fontSize: "12px", cursor: "pointer" }}>
             ← Back
           </button>
         </div>
 
-        <h3 style={{ margin: "0 0 6px 0", fontSize: "16px", color: "#cbd5e1" }}>
-          {mode === "login" && "Sign in to your account (Demo Mode)"}
-          {mode === "register" && "Create a new account"}
-          {mode === "forgot" && "Reset your password"}
-        </h3>
-        <p style={{ margin: "0 0 20px 0", fontSize: "13px", color: "#94a3b8" }}>
-          {mode === "forgot"
-            ? "Enter your account email and choose a new password"
-            : "Access the query performance workbench"}
-        </p>
+        <h3 style={{ margin: "0 0 16px 0", fontSize: "16px" }}>Sign in to your account</h3>
 
         {error && (
-          <div
-            style={{
-              background: "#450a0a",
-              color: "#f87171",
-              border: "1px solid #7f1d1d",
-              borderRadius: "6px",
-              padding: "10px 12px",
-              fontSize: "13px",
-              marginBottom: "16px",
-            }}
-          >
+          <div style={{ background: "#450a0a", color: "#f87171", padding: "10px", borderRadius: "6px", fontSize: "13px", marginBottom: "14px" }}>
             {error}
-          </div>
-        )}
-
-        {success && (
-          <div
-            style={{
-              background: "#052e16",
-              color: "#4ade80",
-              border: "1px solid #14532d",
-              borderRadius: "6px",
-              padding: "10px 12px",
-              fontSize: "13px",
-              marginBottom: "16px",
-            }}
-          >
-            {success}
           </div>
         )}
 
@@ -1655,67 +1158,48 @@ function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) 
             <label style={{ display: "block", fontSize: "12px", color: "#94a3b8", marginBottom: "6px" }}>
               Username or Email
             </label>
-            <div style={{ position: "relative" }}>
-              <Mail size={16} color="#64748b" style={{ position: "absolute", left: "12px", top: "12px" }} />
-              <input
-                type="text"
-                required
-                placeholder={mode === "login" ? "e.g. abc or user@example.com" : "name@company.com"}
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "10px 12px 10px 38px",
-                  borderRadius: "6px",
-                  background: "#0f172a",
-                  border: "1px solid #475569",
-                  color: "#ffffff",
-                  fontSize: "14px",
-                  boxSizing: "border-box",
-                }}
-              />
-            </div>
+            <input
+              type="text"
+              required
+              placeholder="e.g. user@company.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                borderRadius: "6px",
+                background: "#0f172a",
+                border: "1px solid #475569",
+                color: "#ffffff",
+                boxSizing: "border-box",
+              }}
+            />
           </div>
 
           <div>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-              <label style={{ fontSize: "12px", color: "#94a3b8" }}>
-                {mode === "forgot" ? "New Password" : "Password"}
-              </label>
-              {mode === "login" && (
-                <span
-                  onClick={() => resetState("forgot")}
-                  style={{ fontSize: "12px", color: "#60a5fa", cursor: "pointer" }}
-                >
-                  Forgot password?
-                </span>
-              )}
-            </div>
-            <div style={{ position: "relative" }}>
-              <Lock size={16} color="#64748b" style={{ position: "absolute", left: "12px", top: "12px" }} />
-              <input
-                type="password"
-                required
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "10px 12px 10px 38px",
-                  borderRadius: "6px",
-                  background: "#0f172a",
-                  border: "1px solid #475569",
-                  color: "#ffffff",
-                  fontSize: "14px",
-                  boxSizing: "border-box",
-                }}
-              />
-            </div>
+            <label style={{ display: "block", fontSize: "12px", color: "#94a3b8", marginBottom: "6px" }}>
+              Password
+            </label>
+            <input
+              type="password"
+              required
+              placeholder="••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                borderRadius: "6px",
+                background: "#0f172a",
+                border: "1px solid #475569",
+                color: "#ffffff",
+                boxSizing: "border-box",
+              }}
+            />
           </div>
 
           <button
             type="submit"
-            disabled={submitting}
             style={{
               marginTop: "8px",
               padding: "11px",
@@ -1725,60 +1209,11 @@ function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) 
               borderRadius: "6px",
               fontWeight: "600",
               cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "8px",
             }}
           >
-            {submitting
-              ? "Processing..."
-              : mode === "login"
-              ? "Sign In"
-              : mode === "register"
-              ? "Register Account"
-              : "Reset Password"}
-            <ArrowRight size={16} />
+            Sign In →
           </button>
         </form>
-
-        <div style={{ marginTop: "20px", textAlign: "center", fontSize: "13px", color: "#94a3b8" }}>
-          {mode === "login" && (
-            <>
-              Don't have an account?{" "}
-              <span
-                onClick={() => resetState("register")}
-                style={{ color: "#60a5fa", cursor: "pointer", fontWeight: "600" }}
-              >
-                Sign up
-              </span>
-            </>
-          )}
-
-          {mode === "register" && (
-            <>
-              Already have an account?{" "}
-              <span
-                onClick={() => resetState("login")}
-                style={{ color: "#60a5fa", cursor: "pointer", fontWeight: "600" }}
-              >
-                Sign in
-              </span>
-            </>
-          )}
-
-          {mode === "forgot" && (
-            <>
-              Remembered your credentials?{" "}
-              <span
-                onClick={() => resetState("login")}
-                style={{ color: "#60a5fa", cursor: "pointer", fontWeight: "600" }}
-              >
-                Back to Sign in
-              </span>
-            </>
-          )}
-        </div>
       </div>
     </div>
   );
