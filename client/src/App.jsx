@@ -7,19 +7,26 @@ import {
   Copy,
   Database,
   Download,
+  FileText,
   Gauge,
   Layers,
   LogOut,
   RefreshCw,
+  Shield,
   ShieldAlert,
   ShieldCheck,
   Terminal,
   TriangleAlert,
+  Users,
   Wand2,
   Zap,
 } from "lucide-react";
 
-const API = "https://ai-powered-database-query-performance.onrender.com/api";
+const API =
+  typeof window !== "undefined" &&
+  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+    ? "http://localhost:5000/api"
+    : "https://ai-powered-database-query-performance.onrender.com/api";
 
 // ---------------- HELPERS ---------------- //
 
@@ -46,6 +53,14 @@ const getToken = () => {
     return localStorage.getItem("advisor_token") || "";
   } catch {
     return "";
+  }
+};
+
+const getRole = () => {
+  try {
+    return localStorage.getItem("advisor_role") || "user";
+  } catch {
+    return "user";
   }
 };
 
@@ -103,13 +118,13 @@ ORDER BY created_at DESC;`;
 export default function App() {
   const [currentUser, setCurrentUser] = useState(() => {
     try {
-      // only treat as logged in if a token also exists
       return localStorage.getItem("advisor_token") ? localStorage.getItem("advisor_user") || null : null;
     } catch {
       return null;
     }
   });
 
+  const [userRole, setUserRole] = useState(getRole);
   const [showAuth, setShowAuth] = useState(false);
   const [initialAuthMode, setInitialAuthMode] = useState("login");
   const [activeTab, setActiveTab] = useState("workbench");
@@ -117,21 +132,31 @@ export default function App() {
   const [report, setReport] = useState(null);
   const [reports, setReports] = useState([]);
   const [stats, setStats] = useState({ total: 0, averageScore: 0, highRisk: 0 });
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [adminReports, setAdminReports] = useState([]);
+  const [adminStats, setAdminStats] = useState(null);
   const [health, setHealth] = useState(false);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [generatingReport, setGeneratingReport] = useState(false);
 
   const handleLogout = () => {
     try {
       localStorage.removeItem("advisor_token");
       localStorage.removeItem("advisor_user");
+      localStorage.removeItem("advisor_role");
     } catch (e) {}
     setCurrentUser(null);
+    setUserRole("user");
     setReport(null);
     setReports([]);
     setStats({ total: 0, averageScore: 0, highRisk: 0 });
+    setAdminUsers([]);
+    setAdminReports([]);
+    setAdminStats(null);
     setShowAuth(false);
+    setActiveTab("workbench");
   };
 
   const loadReportsAndStats = async () => {
@@ -194,9 +219,142 @@ export default function App() {
         } catch (e) {}
       }
     } catch (err) {
-      console.warn("Backend scoped sync skipped; using local store.");
+      console.warn("Backend sync skipped; using local store.");
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const loadAdminData = async () => {
+    if (userRole !== "admin") return;
+    setRefreshing(true);
+    try {
+      const [resUsers, resReports, resStats] = await Promise.all([
+        authFetch(`${API}/admin/users`),
+        authFetch(`${API}/admin/reports?limit=100`),
+        authFetch(`${API}/admin/stats`),
+      ]);
+
+      if (resUsers.status === 401 || resUsers.status === 403) {
+        alert("Admin session expired or access denied.");
+        return;
+      }
+
+      const dataUsers = await resUsers.json();
+      const dataReports = await resReports.json();
+      const dataStats = await resStats.json();
+
+      if (dataUsers?.ok) setAdminUsers(dataUsers.users || []);
+      if (dataReports?.ok) setAdminReports(dataReports.reports || []);
+      if (dataStats?.ok) setAdminStats(dataStats);
+    } catch (err) {
+      console.warn("Failed to load admin data:", err);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleGenerateAdminReport = async () => {
+    setGeneratingReport(true);
+    try {
+      const res = await authFetch(`${API}/admin/generate-report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "Enterprise Database Performance & User Audit Report" }),
+      });
+
+      const data = await res.json();
+      if (!data.ok || !data.report) {
+        alert(data.error || "Failed to generate report.");
+        return;
+      }
+
+      // Generate PDF of the Administrative Audit
+      const r = data.report;
+      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const margin = 14;
+      const contentWidth = pageWidth - margin * 2;
+      let y = 35;
+
+      doc.setFillColor(37, 99, 235);
+      doc.rect(0, 0, pageWidth, 24, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(15);
+      doc.setTextColor(255, 255, 255);
+      doc.text("QueryPilot - Admin Executive Audit", margin, 12);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.text(`Generated by: ${r.generatedBy} | ${new Date(r.generatedAt).toLocaleString()}`, margin, 18);
+
+      doc.setFillColor(248, 250, 252);
+      doc.roundedRect(margin, y, contentWidth, 24, 2, 2, "FD");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`Total Users: ${r.metrics.totalUsers}`, margin + 5, y + 8);
+      doc.text(`Queries Executed: ${r.metrics.totalQueriesAnalyzed}`, margin + 55, y + 8);
+      doc.text(`System Avg Score: ${r.metrics.averageSystemScore}/100`, margin + 115, y + 8);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(100, 116, 139);
+      doc.text(
+        `Risk Distribution: High: ${r.metrics.riskDistribution.high} | Medium: ${r.metrics.riskDistribution.medium} | Low: ${r.metrics.riskDistribution.low}`,
+        margin + 5,
+        y + 17
+      );
+      y += 32;
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text("Top Detected Query Bottlenecks:", margin, y);
+      y += 6;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(51, 65, 85);
+      (r.topBottlenecks || []).forEach((b) => {
+        doc.text(`• ${b.title} (Observed ${b.count} times)`, margin + 2, y);
+        y += 5;
+      });
+
+      y += 4;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text("User Workload Summary:", margin, y);
+      y += 6;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      (r.userBreakdown || []).forEach((u) => {
+        doc.text(`• ${u.email}: ${u.queriesSubmitted} queries | Avg Score: ${u.avgScore}/100 | High Risk: ${u.highRiskCount}`, margin + 2, y);
+        y += 5;
+      });
+
+      y += 4;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text("System Recommendations:", margin, y);
+      y += 6;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      (r.recommendations || []).forEach((rec, idx) => {
+        doc.text(`${idx + 1}. ${rec}`, margin + 2, y);
+        y += 5;
+      });
+
+      doc.save(`admin-audit-report-${Date.now()}.pdf`);
+      alert("Executive System Audit Report generated and downloaded successfully!");
+      loadAdminData();
+    } catch (e) {
+      alert("Error generating administrative report.");
+    } finally {
+      setGeneratingReport(false);
     }
   };
 
@@ -245,6 +403,7 @@ export default function App() {
         } catch (e) {}
 
         await loadReportsAndStats();
+        if (userRole === "admin") loadAdminData();
       } else {
         alert(`Analysis error: ${d.error}`);
       }
@@ -259,9 +418,12 @@ export default function App() {
     if (currentUser) {
       checkHealth();
       loadReportsAndStats();
+      if (userRole === "admin") {
+        loadAdminData();
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUser]);
+  }, [currentUser, userRole]);
 
   const copyToClipboard = (text) => {
     try {
@@ -427,8 +589,9 @@ export default function App() {
     return (
       <AuthScreen
         initialMode={initialAuthMode}
-        onLoginSuccess={(email) => {
+        onLoginSuccess={(email, role) => {
           setCurrentUser(email);
+          setUserRole(role || "user");
           setShowAuth(false);
         }}
         onBackToWelcome={() => setShowAuth(false)}
@@ -532,6 +695,31 @@ export default function App() {
             >
               <BarChart3 size={16} /> Analytics Dashboard
             </button>
+
+            {userRole === "admin" && (
+              <button
+                onClick={() => {
+                  setActiveTab("admin");
+                  loadAdminData();
+                }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  width: "100%",
+                  padding: "10px 14px",
+                  borderRadius: "6px",
+                  fontSize: "13px",
+                  fontWeight: "500",
+                  border: "none",
+                  cursor: "pointer",
+                  background: activeTab === "admin" ? "#2563eb" : "transparent",
+                  color: activeTab === "admin" ? "#ffffff" : "#94a3b8",
+                }}
+              >
+                <Shield size={16} /> Admin Portal
+              </button>
+            )}
           </nav>
         </div>
 
@@ -555,7 +743,22 @@ export default function App() {
           </div>
 
           <div>
-            <div style={{ fontSize: "11px", color: "#64748b", marginBottom: "4px" }}>Signed in as</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+              <span style={{ fontSize: "11px", color: "#64748b" }}>Signed in as</span>
+              <span
+                style={{
+                  fontSize: "10px",
+                  padding: "2px 6px",
+                  borderRadius: "4px",
+                  background: userRole === "admin" ? "#2563eb33" : "#334155",
+                  color: userRole === "admin" ? "#60a5fa" : "#94a3b8",
+                  fontWeight: "600",
+                  textTransform: "uppercase",
+                }}
+              >
+                {userRole}
+              </span>
+            </div>
             <div
               style={{
                 fontSize: "13px",
@@ -597,7 +800,21 @@ export default function App() {
 
       {/* ---------------- MAIN CONTENT AREA ---------------- */}
       <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", minHeight: "100vh" }}>
-        {activeTab === "dashboard" ? (
+        {activeTab === "admin" && userRole === "admin" ? (
+          <AdminPortalView
+            users={adminUsers}
+            reports={adminReports}
+            stats={adminStats}
+            refreshing={refreshing}
+            generatingReport={generatingReport}
+            onRefresh={loadAdminData}
+            onGenerateReport={handleGenerateAdminReport}
+            onSelectQuery={(q) => {
+              setSql(q);
+              setActiveTab("workbench");
+            }}
+          />
+        ) : activeTab === "dashboard" ? (
           <DashboardView
             stats={stats}
             reports={reports}
@@ -1109,6 +1326,269 @@ function DashboardView({ stats, reports, refreshing, onRefresh, onSelectQuery })
   );
 }
 
+// ---------------- ADMIN PORTAL VIEW ---------------- //
+
+function AdminPortalView({
+  users,
+  reports,
+  stats,
+  refreshing,
+  generatingReport,
+  onRefresh,
+  onGenerateReport,
+  onSelectQuery,
+}) {
+  const [userSearch, setUserSearch] = useState("");
+  const [reportSearch, setReportSearch] = useState("");
+
+  const filteredUsers = users.filter((u) =>
+    (u.email || "").toLowerCase().includes(userSearch.toLowerCase())
+  );
+
+  const filteredReports = reports.filter(
+    (r) =>
+      (r.userEmail || "").toLowerCase().includes(reportSearch.toLowerCase()) ||
+      (r.sql || "").toLowerCase().includes(reportSearch.toLowerCase())
+  );
+
+  return (
+    <main style={{ padding: "28px 36px", maxWidth: "1200px", width: "100%", boxSizing: "border-box" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <Shield size={20} color="#3b82f6" />
+            <h1 style={{ margin: 0, fontSize: "22px" }}>Administrator Control Center</h1>
+          </div>
+          <p style={{ margin: "4px 0 0 0", color: "#94a3b8", fontSize: "14px" }}>
+            Global overview of all user actions, queries, and system audit reporting
+          </p>
+        </div>
+
+        <div style={{ display: "flex", gap: "10px" }}>
+          <button
+            onClick={onRefresh}
+            disabled={refreshing}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "8px 14px",
+              background: "#1e293b",
+              color: "#ffffff",
+              border: "1px solid #334155",
+              borderRadius: "6px",
+              cursor: "pointer",
+              fontSize: "13px",
+            }}
+          >
+            <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} /> Refresh
+          </button>
+
+          <button
+            onClick={onGenerateReport}
+            disabled={generatingReport}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "8px 16px",
+              background: "#2563eb",
+              color: "#ffffff",
+              border: "none",
+              borderRadius: "6px",
+              cursor: generatingReport ? "wait" : "pointer",
+              fontWeight: "600",
+              fontSize: "13px",
+            }}
+          >
+            <FileText size={15} /> {generatingReport ? "Generating Audit..." : "Generate Audit Report"}
+          </button>
+        </div>
+      </div>
+
+      {/* Admin Metric Cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "16px", marginBottom: "24px" }}>
+        <DashboardCard
+          title="Registered Users"
+          value={stats?.totalUsers || users.length}
+          icon={<Users color="#38bdf8" size={24} />}
+          detail="Active accounts in database"
+        />
+        <DashboardCard
+          title="Total User Queries"
+          value={stats?.totalReports || reports.length}
+          icon={<Layers color="#a855f7" size={24} />}
+          detail="All audited SQL executions"
+        />
+        <DashboardCard
+          title="Workload Avg Score"
+          value={`${stats?.averageScore || 0} / 100`}
+          icon={<Gauge color="#10b981" size={24} />}
+          detail="Across all registered users"
+        />
+        <DashboardCard
+          title="High Risk User Queries"
+          value={stats?.highRisk || reports.filter((r) => r.analysis?.riskLevel === "High").length}
+          icon={<ShieldAlert color="#ef4444" size={24} />}
+          detail="Requires immediate DBA action"
+        />
+      </div>
+
+      {/* Users Activity Table */}
+      <div className="card" style={{ padding: "20px", marginBottom: "24px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: "16px" }}>Users & Execution Summary</h3>
+            <small style={{ color: "#94a3b8" }}>Overview of what each registered user has done</small>
+          </div>
+          <input
+            type="text"
+            placeholder="Search users..."
+            value={userSearch}
+            onChange={(e) => setUserSearch(e.target.value)}
+            style={{
+              background: "#0f172a",
+              border: "1px solid #334155",
+              borderRadius: "4px",
+              padding: "6px 10px",
+              fontSize: "12px",
+              color: "#f8fafc",
+            }}
+          />
+        </div>
+
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", textAlign: "left" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid #334155", color: "#94a3b8" }}>
+                <th style={{ padding: "8px 10px" }}>User Email</th>
+                <th style={{ padding: "8px 10px" }}>Role</th>
+                <th style={{ padding: "8px 10px" }}>Queries Run</th>
+                <th style={{ padding: "8px 10px" }}>Avg Score</th>
+                <th style={{ padding: "8px 10px" }}>High Risk</th>
+                <th style={{ padding: "8px 10px" }}>Last Active</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredUsers.map((u, i) => (
+                <tr key={i} style={{ borderBottom: "1px solid #1e293b" }}>
+                  <td style={{ padding: "10px", fontWeight: "500", color: "#f8fafc" }}>{u.email}</td>
+                  <td style={{ padding: "10px" }}>
+                    <span
+                      style={{
+                        padding: "2px 6px",
+                        borderRadius: "4px",
+                        fontSize: "11px",
+                        fontWeight: "600",
+                        background: u.role === "admin" ? "#2563eb33" : "#334155",
+                        color: u.role === "admin" ? "#60a5fa" : "#94a3b8",
+                      }}
+                    >
+                      {u.role}
+                    </span>
+                  </td>
+                  <td style={{ padding: "10px" }}>{u.totalQueries || 0}</td>
+                  <td style={{ padding: "10px", fontWeight: "600" }}>{u.averageScore || 0}/100</td>
+                  <td style={{ padding: "10px", color: (u.highRiskQueries || 0) > 0 ? "#f87171" : "#34d399" }}>
+                    {u.highRiskQueries || 0}
+                  </td>
+                  <td style={{ padding: "10px", color: "#94a3b8", fontSize: "12px" }}>
+                    {u.lastActive ? new Date(u.lastActive).toLocaleDateString() : "Never"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* All User Queries Table */}
+      <div className="card" style={{ padding: "20px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: "16px" }}>All User Query Executions</h3>
+            <small style={{ color: "#94a3b8" }}>Recent queries submitted across all user accounts</small>
+          </div>
+          <input
+            type="text"
+            placeholder="Search queries or user email..."
+            value={reportSearch}
+            onChange={(e) => setReportSearch(e.target.value)}
+            style={{
+              background: "#0f172a",
+              border: "1px solid #334155",
+              borderRadius: "4px",
+              padding: "6px 10px",
+              fontSize: "12px",
+              color: "#f8fafc",
+            }}
+          />
+        </div>
+
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", textAlign: "left" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid #334155", color: "#94a3b8" }}>
+                <th style={{ padding: "8px 10px" }}>User</th>
+                <th style={{ padding: "8px 10px" }}>SQL Snippet</th>
+                <th style={{ padding: "8px 10px" }}>Score</th>
+                <th style={{ padding: "8px 10px" }}>Risk</th>
+                <th style={{ padding: "8px 10px" }}>Timestamp</th>
+                <th style={{ padding: "8px 10px" }}>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredReports.slice(0, 25).map((r, i) => (
+                <tr key={i} style={{ borderBottom: "1px solid #1e293b" }}>
+                  <td style={{ padding: "10px", color: "#94a3b8", fontSize: "12px" }}>{r.userEmail}</td>
+                  <td
+                    style={{
+                      padding: "10px",
+                      fontFamily: "monospace",
+                      color: "#38bdf8",
+                      maxWidth: "220px",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {r.sql}
+                  </td>
+                  <td style={{ padding: "10px", fontWeight: "bold" }}>{r.analysis?.performanceScore || 0}</td>
+                  <td style={{ padding: "10px" }}>
+                    <span className={"pill " + (r.analysis?.riskLevel?.toLowerCase() || "low")}>
+                      {r.analysis?.riskLevel || "Low"}
+                    </span>
+                  </td>
+                  <td style={{ padding: "10px", color: "#64748b", fontSize: "11px" }}>
+                    {new Date(r.createdAt).toLocaleString()}
+                  </td>
+                  <td style={{ padding: "10px" }}>
+                    <button
+                      onClick={() => onSelectQuery(r.sql)}
+                      style={{
+                        background: "#2563eb",
+                        border: "none",
+                        color: "#fff",
+                        padding: "4px 8px",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        fontSize: "11px",
+                      }}
+                    >
+                      Load in Workbench
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  );
+}
+
 function DashboardCard({ title, value, icon, detail }) {
   return (
     <div className="card" style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "8px" }}>
@@ -1123,15 +1603,10 @@ function DashboardCard({ title, value, icon, detail }) {
 }
 
 // ---------------- AUTHENTICATION SCREEN ---------------- //
-// Talks to the backend to obtain a REAL token.
-// Assumed routes: POST {API}/auth/login and POST {API}/auth/register
-// Assumed response: { ok: true, token: "...", user?: { email } }
-// Change AUTH_PATHS below if your Express routes are named differently.
-
-const AUTH_PATHS = { login: "/auth/login", register: "/auth/register" };
 
 function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) {
   const [mode, setMode] = useState(initialMode);
+  const [portalType, setPortalType] = useState("user"); // "user" or "admin"
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -1141,21 +1616,31 @@ function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) 
     e.preventDefault();
     const loginId = email.trim();
     if (!loginId || !password.trim()) {
-      setError("Enter a username/email and password.");
+      setError("Enter an email and password.");
       return;
     }
 
     setError("");
     setSubmitting(true);
+
     try {
-      const res = await fetch(`${API}${AUTH_PATHS[mode]}`, {
+      // Determine endpoint based on mode and portalType
+      let endpoint = `${API}/auth/login`;
+      if (mode === "register") {
+        endpoint = `${API}/auth/register`;
+      } else if (portalType === "admin") {
+        endpoint = `${API}/auth/admin/login`;
+      } else {
+        endpoint = `${API}/auth/user/login`;
+      }
+
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // send several common field names so it matches most backends
         body: JSON.stringify({
           email: loginId,
-          username: loginId,
           password,
+          role: portalType,
         }),
       });
 
@@ -1170,14 +1655,17 @@ function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) 
       }
 
       const userId = data.user?.email || data.user?.username || data.email || loginId;
+      const role = data.user?.role || portalType;
+
       try {
         localStorage.setItem("advisor_token", data.token);
         localStorage.setItem("advisor_user", userId);
+        localStorage.setItem("advisor_role", role);
       } catch (err) {}
 
-      onLoginSuccess(userId);
+      onLoginSuccess(userId, role);
     } catch (err) {
-      setError("Backend not reachable. It may be waking up on Render, try again in a few seconds.");
+      setError("Backend not reachable. Ensure Express server is running.");
     } finally {
       setSubmitting(false);
     }
@@ -1228,8 +1716,70 @@ function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) 
           </button>
         </div>
 
+        {/* Portal Selection Switch (User Login vs Admin Login) */}
+        {mode === "login" && (
+          <div
+            style={{
+              display: "flex",
+              gap: "6px",
+              background: "#0f172a",
+              padding: "4px",
+              borderRadius: "8px",
+              marginBottom: "16px",
+              border: "1px solid #334155",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setPortalType("user");
+                setError("");
+              }}
+              style={{
+                flex: 1,
+                padding: "8px",
+                borderRadius: "6px",
+                border: "none",
+                fontSize: "12px",
+                fontWeight: "600",
+                cursor: "pointer",
+                background: portalType === "user" ? "#2563eb" : "transparent",
+                color: portalType === "user" ? "#ffffff" : "#94a3b8",
+                transition: "all 0.15s ease",
+              }}
+            >
+              User Login
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPortalType("admin");
+                setError("");
+              }}
+              style={{
+                flex: 1,
+                padding: "8px",
+                borderRadius: "6px",
+                border: "none",
+                fontSize: "12px",
+                fontWeight: "600",
+                cursor: "pointer",
+                background: portalType === "admin" ? "#2563eb" : "transparent",
+                color: portalType === "admin" ? "#ffffff" : "#94a3b8",
+                transition: "all 0.15s ease",
+              }}
+            >
+              Admin Login
+            </button>
+          </div>
+        )}
+
         <h3 style={{ margin: "0 0 16px 0", fontSize: "16px" }}>
-          {mode === "login" ? "Sign in to your account" : "Create your account"}
+          {mode === "register"
+            ? "Create your user account"
+            : portalType === "admin"
+            ? "Administrator Authentication"
+            : "Sign in to your account"}
         </h3>
 
         {error && (
@@ -1241,12 +1791,12 @@ function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) 
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
           <div>
             <label style={{ display: "block", fontSize: "12px", color: "#94a3b8", marginBottom: "6px" }}>
-              Username or Email
+              {portalType === "admin" && mode === "login" ? "Administrator Email" : "Email Address"}
             </label>
             <input
-              type="text"
+              type="email"
               required
-              placeholder="e.g. user@company.com"
+              placeholder={portalType === "admin" ? "admin@demo.edu" : "user@company.com"}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               style={inputStyle}
@@ -1282,21 +1832,28 @@ function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) 
               opacity: submitting ? 0.7 : 1,
             }}
           >
-            {submitting ? "Please wait..." : mode === "login" ? "Sign In →" : "Create Account →"}
+            {submitting
+              ? "Please wait..."
+              : mode === "register"
+              ? "Create Account →"
+              : portalType === "admin"
+              ? "Sign In as Admin →"
+              : "Sign In as User →"}
           </button>
         </form>
 
         <div style={{ marginTop: "16px", textAlign: "center", fontSize: "12px", color: "#94a3b8" }}>
-          {mode === "login" ? "New here? " : "Already have an account? "}
+          {mode === "login" ? "Need a normal user account? " : "Already have an account? "}
           <button
             type="button"
             onClick={() => {
               setMode(mode === "login" ? "register" : "login");
+              setPortalType("user");
               setError("");
             }}
             style={{ background: "transparent", border: "none", color: "#38bdf8", cursor: "pointer", fontSize: "12px" }}
           >
-            {mode === "login" ? "Create an account" : "Sign in"}
+            {mode === "login" ? "Register here" : "Sign in"}
           </button>
         </div>
       </div>
