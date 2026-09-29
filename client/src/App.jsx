@@ -2,46 +2,50 @@ import React, { useEffect, useState } from "react";
 import jsPDF from "jspdf";
 import {
   Activity,
+  ArrowRight,
   BarChart3,
+  CheckCircle2,
   CheckCheck,
+  ChevronRight,
   Copy,
   Database,
   Download,
   Gauge,
   Layers,
+  Lock,
   LogOut,
+  Mail,
   RefreshCw,
   Search,
   ShieldAlert,
   ShieldCheck,
   Terminal,
+  TrendingDown,
   TriangleAlert,
   Wand2,
-  Users,
-  FileText,
-  User,
-  Lock,
-  Mail,
   Zap,
 } from "lucide-react";
 
-/* =========================================================
-   API
-========================================================= */
+const API = "https://ai-powered-database-query-performance.onrender.com/api";
 
-const API =
-  import.meta.env.VITE_API_URL ||
-  "https://ai-powered-database-query-performance.onrender.com/api";
+// TOP-LEVEL SCOPED HELPERS (Prevents ReferenceError on any device)
+const getDisplayName = (val) => {
+  if (!val) return "User";
+  if (typeof val === "string") {
+    try {
+      const parsed = JSON.parse(val);
+      return parsed.email || parsed.username || parsed.id || val;
+    } catch {
+      return val;
+    }
+  }
+  return val.email || val.username || "User";
+};
 
-/*
-  If you are running backend locally, use:
-
-  const API = "http://localhost:5000/api";
-*/
-
-/* =========================================================
-   SAMPLE SQL
-========================================================= */
+const getStorageKey = (prefix, currentUser) => {
+  const user = getDisplayName(currentUser);
+  return `${prefix}_${String(user).toLowerCase().replace(/[^a-z0-9]/g, "_")}`;
+};
 
 const SAMPLE_DEFAULT = `SELECT *
 FROM orders o
@@ -71,795 +75,294 @@ WHERE transaction_date >= '2026-01-01'
 GROUP BY customer_id
 ORDER BY total_spent DESC;`;
 
-const SAMPLE_SUBQUERY = `SELECT id, name, email
-FROM customers
+const SAMPLE_SUBQUERY = `SELECT id, name, email 
+FROM customers 
 WHERE id IN (
-  SELECT customer_id
-  FROM orders
+  SELECT customer_id 
+  FROM orders 
   WHERE total_amount > 1000
 )
 ORDER BY created_at DESC;`;
 
-/* =========================================================
-   HELPERS
-========================================================= */
-
-function getToken() {
-  try {
-    return localStorage.getItem("advisor_token");
-  } catch {
-    return null;
-  }
-}
-
-function getStoredUser() {
-  try {
-    const raw = localStorage.getItem("advisor_user");
-
-    if (!raw) return null;
-
-    const parsed = JSON.parse(raw);
-
-    if (parsed && typeof parsed === "object") {
-      return parsed;
-    }
-
-    // Migration for old version where only email was stored
-    if (typeof parsed === "string") {
-      return {
-        email: parsed,
-        role: "user",
-      };
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function getDisplayName(user) {
-  if (!user) return "User";
-
-  if (typeof user === "string") {
-    return user;
-  }
-
-  return user.email || user.username || "User";
-}
-
-function authHeaders() {
-  const token = getToken();
-
-  return {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${token}`,
-  };
-}
-
-function getRiskClass(risk) {
-  return String(risk || "Low").toLowerCase();
-}
-
-/* =========================================================
-   MAIN APP
-========================================================= */
-
 export default function App() {
-  const [currentUser, setCurrentUser] = useState(() => getStoredUser());
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      return localStorage.getItem("advisor_user") || null;
+    } catch {
+      return null;
+    }
+  });
 
   const [showAuth, setShowAuth] = useState(false);
   const [initialAuthMode, setInitialAuthMode] = useState("login");
-
   const [activeTab, setActiveTab] = useState("workbench");
-
   const [sql, setSql] = useState(SAMPLE_DEFAULT);
   const [report, setReport] = useState(null);
   const [reports, setReports] = useState([]);
-
-  const [stats, setStats] = useState({
-    total: 0,
-    averageScore: 0,
-    highRisk: 0,
-    mediumRisk: 0,
-    lowRisk: 0,
-  });
-
+  const [stats, setStats] = useState({ total: 0, averageScore: 0, highRisk: 0 });
   const [health, setHealth] = useState(false);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  /* Admin states */
-
-  const [adminStats, setAdminStats] = useState({
-    totalUsers: 0,
-    totalReports: 0,
-    averageScore: 0,
-    highRisk: 0,
-    mediumRisk: 0,
-    lowRisk: 0,
-  });
-
-  const [adminUsers, setAdminUsers] = useState([]);
-  const [adminReports, setAdminReports] = useState([]);
-  const [selectedAdminUser, setSelectedAdminUser] = useState("");
-
-  const [adminLoading, setAdminLoading] = useState(false);
-
-  /* =========================================================
-     LOGOUT
-  ========================================================= */
-
   const handleLogout = () => {
     try {
       localStorage.removeItem("advisor_token");
       localStorage.removeItem("advisor_user");
-    } catch {}
-
+    } catch (e) {}
     setCurrentUser(null);
     setReport(null);
     setReports([]);
-    setStats({
-      total: 0,
-      averageScore: 0,
-      highRisk: 0,
-      mediumRisk: 0,
-      lowRisk: 0,
-    });
-
-    setAdminUsers([]);
-    setAdminReports([]);
-
+    setStats({ total: 0, averageScore: 0, highRisk: 0 });
     setShowAuth(false);
-    setActiveTab("workbench");
   };
-
-  /* =========================================================
-     AUTH VALIDATION
-  ========================================================= */
-
-  useEffect(() => {
-    const validateLogin = async () => {
-      const token = getToken();
-
-      if (!token) {
-        setCurrentUser(null);
-        return;
-      }
-
-      try {
-        const response = await fetch(`${API}/auth/me`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-
-        const data = await response.json();
-
-        if (!response.ok || !data.ok) {
-          handleLogout();
-          return;
-        }
-
-        setCurrentUser(data.user);
-
-        localStorage.setItem(
-          "advisor_user",
-          JSON.stringify(data.user)
-        );
-      } catch {
-        /*
-          Do not immediately logout because Render may be sleeping.
-          Existing token/user can remain temporarily.
-        */
-      }
-    };
-
-    if (currentUser) {
-      validateLogin();
-    }
-  }, []);
-
-  /* =========================================================
-     HEALTH CHECK
-  ========================================================= */
-
-  const checkHealth = async () => {
-    try {
-      const response = await fetch(`${API}/health`);
-      const data = await response.json();
-
-      setHealth(!!data.mongodb);
-    } catch {
-      setHealth(false);
-    }
-  };
-
-  /* =========================================================
-     USER REPORTS + STATS
-  ========================================================= */
 
   const loadReportsAndStats = async () => {
-    if (!currentUser || currentUser.role !== "user") return;
+    if (!currentUser) return;
+    const userParam = encodeURIComponent(getDisplayName(currentUser));
+    const localReportsKey = getStorageKey("advisor_reports", currentUser);
+    const localStatsKey = getStorageKey("advisor_stats", currentUser);
+
+    let localReports = [];
+    let localStats = { total: 0, averageScore: 0, highRisk: 0 };
+
+    try {
+      const storedReports = localStorage.getItem(localReportsKey);
+      if (storedReports) {
+        const parsed = JSON.parse(storedReports);
+        if (Array.isArray(parsed)) localReports = parsed;
+      }
+    } catch {
+      localStorage.removeItem(localReportsKey);
+    }
+
+    try {
+      const storedStats = localStorage.getItem(localStatsKey);
+      if (storedStats) {
+        const parsed = JSON.parse(storedStats);
+        if (parsed && typeof parsed === "object") localStats = parsed;
+      }
+    } catch {
+      localStorage.removeItem(localStatsKey);
+    }
+
+    setReports(localReports);
+    setStats(localStats);
 
     try {
       setRefreshing(true);
-
-      const token = getToken();
-
-      const [reportsResponse, statsResponse] = await Promise.all([
-        fetch(`${API}/reports`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }),
-
-        fetch(`${API}/stats`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }),
+      const [resReports, resStats] = await Promise.all([
+        fetch(`${API}/reports?userEmail=${userParam}`),
+        fetch(`${API}/stats?userEmail=${userParam}`),
       ]);
 
-      const reportsData = await reportsResponse.json();
-      const statsData = await statsResponse.json();
+      const dataReports = await resReports.json();
+      const dataStats = await resStats.json();
 
-      if (reportsData.ok) {
-        setReports(
-          Array.isArray(reportsData.reports)
-            ? reportsData.reports
-            : []
-        );
+      if (dataReports && dataReports.ok && Array.isArray(dataReports.reports)) {
+        setReports(dataReports.reports);
+        try {
+          localStorage.setItem(localReportsKey, JSON.stringify(dataReports.reports));
+        } catch (e) {}
       }
-
-      if (statsData.ok) {
-        setStats(statsData);
+      if (dataStats && dataStats.ok) {
+        setStats(dataStats);
+        try {
+          localStorage.setItem(localStatsKey, JSON.stringify(dataStats));
+        } catch (e) {}
       }
-    } catch (error) {
-      console.error("Loading user reports failed:", error);
+    } catch (err) {
+      console.warn("Backend scoped sync skipped; using local store.");
     } finally {
       setRefreshing(false);
     }
   };
 
-  /* =========================================================
-     INITIAL USER DATA
-  ========================================================= */
-
-  useEffect(() => {
-    if (!currentUser) return;
-
-    checkHealth();
-
-    if (currentUser.role === "user") {
-      loadReportsAndStats();
+  const checkHealth = async () => {
+    try {
+      const r = await fetch(`${API}/health`);
+      const d = await r.json();
+      setHealth(!!d.mongodb);
+    } catch (err) {
+      setHealth(false);
     }
-
-    if (currentUser.role === "admin") {
-      loadAdminData();
-    }
-  }, [currentUser]);
-
-  /* =========================================================
-     SQL ANALYSIS
-  ========================================================= */
+  };
 
   const analyze = async () => {
-    if (!sql.trim()) {
-      alert("Enter an SQL query.");
-      return;
-    }
-
-    if (!currentUser || currentUser.role !== "user") {
-      alert("Only normal users can analyze SQL queries.");
-      return;
-    }
-
-    const token = getToken();
-
-    if (!token) {
-      alert("Your session has expired. Please login again.");
-      handleLogout();
-      return;
-    }
-
+    if (!sql.trim()) return alert("Enter an SQL query.");
     setLoading(true);
     setCopied(false);
-
     try {
-      const response = await fetch(`${API}/analyze`, {
+      const r = await fetch(`${API}/analyze`, {
         method: "POST",
-
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: "SQL Performance Analysis",
           sql: sql,
+          userEmail: getDisplayName(currentUser),
         }),
       });
 
-      const data = await response.json();
+      const d = await r.json();
+      if (d.ok) {
+        setReport(d.report);
 
-      if (response.status === 401) {
-        alert("Session expired. Please login again.");
-        handleLogout();
-        return;
+        try {
+          const localKey = getStorageKey("advisor_reports", currentUser);
+          const raw = localStorage.getItem(localKey);
+          const currentLocal = raw ? JSON.parse(raw) : [];
+          const list = Array.isArray(currentLocal) ? currentLocal : [];
+          const updated = [d.report, ...list.filter((item) => item._id !== d.report._id)];
+          localStorage.setItem(localKey, JSON.stringify(updated));
+        } catch (e) {}
+
+        await loadReportsAndStats();
+      } else {
+        alert(`Analysis error: ${d.error}`);
       }
-
-      if (!data.ok) {
-        alert(`Analysis error: ${data.error || "Unknown error"}`);
-        return;
-      }
-
-      setReport(data.report);
-
-      await loadReportsAndStats();
-    } catch (error) {
-      console.error(error);
-      alert(
-        "Backend not reachable. Make sure your Express server is running or Render backend is available."
-      );
+    } catch (e) {
+      alert("Backend not reachable. Ensure Express is running.");
     } finally {
       setLoading(false);
     }
   };
 
-  /* =========================================================
-     COPY
-  ========================================================= */
-
-  const copyToClipboard = async (text) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-
-      setTimeout(() => {
-        setCopied(false);
-      }, 2000);
-    } catch {
-      alert("Unable to copy SQL.");
+  useEffect(() => {
+    if (currentUser) {
+      checkHealth();
+      loadReportsAndStats();
     }
-  };
+  }, [currentUser]);
 
-  /* =========================================================
-     PDF REPORT
-  ========================================================= */
+  const copyToClipboard = (text) => {
+    try {
+      navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
+  };
 
   const download = () => {
     if (!report) return;
-
-    const analysis = report.analysis;
-
-    const doc = new jsPDF({
-      orientation: "portrait",
-      unit: "mm",
-      format: "a4",
-    });
-
+    const a = report.analysis;
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
     const pageWidth = doc.internal.pageSize.getWidth();
-
     const margin = 14;
     const contentWidth = pageWidth - margin * 2;
+    let y = 35; // Start below the branding banner
 
-    let y = 18;
-
-    const checkPageBreak = (height) => {
-      if (y + height > 280) {
+    const checkPageBreak = (neededHeight) => {
+      if (y + neededHeight > 275) {
         doc.addPage();
-        y = 18;
+        y = 35; // Start below the branding banner on subsequent pages
       }
     };
-
-    /* Header */
-
-    doc.setFillColor(15, 23, 42);
-    doc.rect(0, 0, pageWidth, 24, "F");
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
-    doc.setTextColor(255, 255, 255);
-
-    doc.text(
-      "AI Query Performance Advisor - Optimization Report",
-      margin,
-      11
-    );
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(148, 163, 184);
-
-    doc.text(
-      `Generated: ${new Date().toLocaleString()} | User: ${getDisplayName(
-        currentUser
-      )}`,
-      margin,
-      18
-    );
-
-    y = 32;
-
-    /* Score */
+  y = 35;
 
     doc.setFillColor(248, 250, 252);
     doc.setDrawColor(226, 232, 240);
-
-    doc.roundedRect(
-      margin,
-      y,
-      contentWidth,
-      20,
-      2,
-      2,
-      "FD"
-    );
+    doc.roundedRect(margin, y, contentWidth, 20, 2, 2, "FD");
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
     doc.setTextColor(15, 23, 42);
-
-    doc.text(
-      `Score: ${analysis.performanceScore}/100`,
-      margin + 5,
-      y + 8
-    );
-
-    doc.text(
-      `Risk: ${analysis.riskLevel}`,
-      margin + 55,
-      y + 8
-    );
-
-    doc.text(
-      `Query Type: ${analysis.queryType}`,
-      margin + 110,
-      y + 8
-    );
+    doc.text(`Score: ${a.performanceScore}/100`, margin + 5, y + 8);
+    doc.text(`Risk: ${a.riskLevel}`, margin + 55, y + 8);
+    doc.text(`Query Type: ${a.queryType}`, margin + 110, y + 8);
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
     doc.setTextColor(100, 116, 139);
-
-    doc.text(
-      `Est. Execution Impact: ${
-        analysis.executionEstimate || "N/A"
-      }`,
-      margin + 5,
-      y + 15
-    );
-
+    doc.text(`Est. Execution Impact: ${a.executionEstimate || "N/A"}`, margin + 5, y + 15);
     y += 26;
-
-    /* SQL */
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10.5);
     doc.setTextColor(15, 23, 42);
-
     doc.text("Submitted SQL Query:", margin, y);
-
     y += 5;
 
     doc.setFont("courier", "normal");
     doc.setFontSize(8);
     doc.setTextColor(14, 116, 144);
-
-    const sqlLines = doc.splitTextToSize(
-      report.sql || "",
-      contentWidth
-    );
-
+    const sqlLines = doc.splitTextToSize(report.sql, contentWidth);
     doc.text(sqlLines, margin, y);
-
     y += sqlLines.length * 3.8 + 6;
-
-    /* Corrected Query */
-
-    if (analysis.correctedQuery) {
+    if (a.correctedQuery) {
       checkPageBreak(25);
-
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10.5);
       doc.setTextColor(16, 185, 129);
-
-      doc.text(
-        "AI-Recommended Corrected Query:",
-        margin,
-        y
-      );
-
+      doc.text("AI-Recommended Corrected Query:", margin, y);
       y += 5;
 
       doc.setFont("courier", "normal");
       doc.setFontSize(8);
       doc.setTextColor(15, 23, 42);
-
-      const correctedLines = doc.splitTextToSize(
-        analysis.correctedQuery,
-        contentWidth
-      );
-
+      const correctedLines = doc.splitTextToSize(a.correctedQuery, contentWidth);
       doc.text(correctedLines, margin, y);
-
       y += correctedLines.length * 3.8 + 6;
     }
 
-    /* Findings */
-
     checkPageBreak(15);
-
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10.5);
     doc.setTextColor(185, 28, 28);
-
     doc.text("Identified Bottlenecks:", margin, y);
-
     y += 5;
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
     doc.setTextColor(51, 65, 85);
-
-    (analysis.findings || []).forEach((finding) => {
+    (a.findings || []).forEach((f) => {
       checkPageBreak(8);
-
-      const line = `• [${finding.severity}] ${finding.title}: ${finding.detail}`;
-
-      const split = doc.splitTextToSize(
-        line,
-        contentWidth
-      );
-
+      const line = `• [${f.severity}] ${f.title}: ${f.detail}`;
+      const split = doc.splitTextToSize(line, contentWidth);
       doc.text(split, margin, y);
-
       y += split.length * 4 + 1.5;
     });
 
     y += 3;
 
-    /* Indexes */
-
     checkPageBreak(15);
-
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10.5);
     doc.setTextColor(30, 41, 59);
-
     doc.text("Recommended Indexes:", margin, y);
-
     y += 5;
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
     doc.setTextColor(51, 65, 85);
-
-    (analysis.indexes || []).forEach((index) => {
+    (a.indexes || []).forEach((idx) => {
       checkPageBreak(8);
-
-      const line = `• Column: ${index.column} (Priority: ${index.priority}) -> ${index.recommendation}`;
-
-      const split = doc.splitTextToSize(
-        line,
-        contentWidth
-      );
-
+      const line = `• Column: ${idx.column} (Priority: ${idx.priority}) -> ${idx.recommendation}`;
+      const split = doc.splitTextToSize(line, contentWidth);
       doc.text(split, margin, y);
-
       y += split.length * 4 + 1.5;
     });
 
     y += 3;
 
-    /* Optimizations */
-
     checkPageBreak(15);
-
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10.5);
     doc.setTextColor(15, 23, 42);
-
-    doc.text(
-      "Optimization Actions for DBA:",
-      margin,
-      y
-    );
-
+    doc.text("Optimization Actions for DBA:", margin, y);
     y += 5;
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
     doc.setTextColor(51, 65, 85);
+    (a.optimizations || []).forEach((opt, idx) => {
+      checkPageBreak(8);
+      const split = doc.splitTextToSize(`${idx + 1}. ${opt}`, contentWidth);
+      doc.text(split, margin, y);
+      y += split.length * 4 + 1.5;
+    });
 
-    (analysis.optimizations || []).forEach(
-      (optimization, index) => {
-        checkPageBreak(8);
-
-        const split = doc.splitTextToSize(
-          `${index + 1}. ${optimization}`,
-          contentWidth
-        );
-
-        doc.text(split, margin, y);
-
-        y += split.length * 4 + 1.5;
-      }
-    );
-
-    doc.save(
-      `optimization-report-${Date.now()}.pdf`
-    );
+    doc.save(`optimization-report-${Date.now()}.pdf`);
   };
-
-  /* =========================================================
-     ADMIN DATA
-  ========================================================= */
-
-  const loadAdminData = async () => {
-    if (!currentUser || currentUser.role !== "admin") {
-      return;
-    }
-
-    const token = getToken();
-
-    if (!token) {
-      handleLogout();
-      return;
-    }
-
-    try {
-      setAdminLoading(true);
-
-      const [
-        statsResponse,
-        usersResponse,
-        reportsResponse,
-      ] = await Promise.all([
-        fetch(`${API}/admin/stats`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }),
-
-        fetch(`${API}/admin/users`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }),
-
-        fetch(`${API}/admin/reports`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }),
-      ]);
-
-      if (
-        statsResponse.status === 401 ||
-        usersResponse.status === 401 ||
-        reportsResponse.status === 401
-      ) {
-        alert("Admin session expired.");
-        handleLogout();
-        return;
-      }
-
-      const statsData = await statsResponse.json();
-      const usersData = await usersResponse.json();
-      const reportsData = await reportsResponse.json();
-
-      if (statsData.ok) {
-        setAdminStats(statsData);
-      }
-
-      if (usersData.ok) {
-        setAdminUsers(
-          Array.isArray(usersData.users)
-            ? usersData.users
-            : []
-        );
-      }
-
-      if (reportsData.ok) {
-        setAdminReports(
-          Array.isArray(reportsData.reports)
-            ? reportsData.reports
-            : []
-        );
-      }
-    } catch (error) {
-      console.error("Admin loading error:", error);
-    } finally {
-      setAdminLoading(false);
-    }
-  };
-
-  /* =========================================================
-     ADMIN SELECT USER
-  ========================================================= */
-
-  const loadAdminUserReports = async (email) => {
-    if (!email) {
-      setSelectedAdminUser("");
-      loadAdminData();
-      return;
-    }
-
-    const token = getToken();
-
-    try {
-      setAdminLoading(true);
-
-      const response = await fetch(
-        `${API}/admin/users/${encodeURIComponent(
-          email
-        )}/reports`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      const data = await response.json();
-
-      if (data.ok) {
-        setSelectedAdminUser(email);
-        setAdminReports(
-          Array.isArray(data.reports)
-            ? data.reports
-            : []
-        );
-      }
-    } catch (error) {
-      console.error(
-        "Admin user reports error:",
-        error
-      );
-    } finally {
-      setAdminLoading(false);
-    }
-  };
-
-  /* =========================================================
-     ADMIN USER STATS
-  ========================================================= */
-
-  const getAdminUserStats = async (email) => {
-    if (!email) return null;
-
-    const token = getToken();
-
-    try {
-      const response = await fetch(
-        `${API}/admin/user-stats/${encodeURIComponent(
-          email
-        )}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      const data = await response.json();
-
-      if (data.ok) {
-        return data;
-      }
-
-      return null;
-    } catch {
-      return null;
-    }
-  };
-
-  /* =========================================================
-     AUTH SCREENS
-  ========================================================= */
 
   if (!currentUser && !showAuth) {
     return (
@@ -872,10 +375,6 @@ export default function App() {
           setInitialAuthMode("register");
           setShowAuth(true);
         }}
-        onAdminLogin={() => {
-          setInitialAuthMode("admin");
-          setShowAuth(true);
-        }}
       />
     );
   }
@@ -884,613 +383,301 @@ export default function App() {
     return (
       <AuthScreen
         initialMode={initialAuthMode}
-        onLoginSuccess={(user) => {
-          setCurrentUser(user);
+        onLoginSuccess={(email) => {
+          setCurrentUser(email);
           setShowAuth(false);
         }}
-        onBackToWelcome={() => {
-          setShowAuth(false);
-        }}
+        onBackToWelcome={() => setShowAuth(false)}
       />
     );
   }
-
-  /* =========================================================
-     ADMIN UI
-  ========================================================= */
-
-  if (currentUser?.role === "admin") {
-    return (
-      <AdminLayout
-        currentUser={currentUser}
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        onLogout={handleLogout}
-        adminStats={adminStats}
-        adminUsers={adminUsers}
-        adminReports={adminReports}
-        selectedAdminUser={selectedAdminUser}
-        setSelectedAdminUser={setSelectedAdminUser}
-        loadAdminData={loadAdminData}
-        loadAdminUserReports={loadAdminUserReports}
-        getAdminUserStats={getAdminUserStats}
-        adminLoading={adminLoading}
-      />
-    );
-  }
-
-  /* =========================================================
-     USER UI
-  ========================================================= */
 
   return (
-    <div
-      style={{
-        display: "flex",
-        minHeight: "100vh",
-        background: "#0f172a",
-        color: "#f8fafc",
-        fontFamily:
-          "system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
-      }}
-    >
-      {/* SIDEBAR */}
-
+    <div style={{ display: "flex", minHeight: "100vh", background: "#0f172a" }}>
+      {/* ---------------- LEFT SIDEBAR COLUMN ---------------- */}
       <aside
         style={{
-          width: "240px",
-          background: "#111827",
-          borderRight: "1px solid #1e293b",
-          padding: "22px 14px",
-          boxSizing: "border-box",
+          width: "260px",
+          minWidth: "260px",
+          background: "#1e293b",
+          borderRight: "1px solid #334155",
           display: "flex",
           flexDirection: "column",
+          justifyContent: "space-between",
+          padding: "20px 16px",
+          position: "sticky",
+          top: 0,
+          height: "100vh",
+          boxSizing: "border-box",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            padding: "8px",
-            marginBottom: "30px",
-          }}
-        >
-          <div
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "28px" }}>
+            <div
+              style={{
+                background: "#2563eb",
+                padding: "8px",
+                borderRadius: "8px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Zap size={20} color="#ffffff" />
+            </div>
+            <div>
+              <b style={{ display: "block", fontSize: "16px", color: "#f8fafc" }}>QueryPilot</b>
+              <span style={{ fontSize: "11px", color: "#94a3b8" }}>Query Performance Advisor</span>
+            </div>
+          </div>
+
+          <label
             style={{
-              width: "36px",
-              height: "36px",
-              borderRadius: "9px",
-              background: "#2563eb",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
+              fontSize: "11px",
+              color: "#64748b",
+              fontWeight: "600",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              display: "block",
+              marginBottom: "10px",
             }}
           >
-            <Zap size={21} />
+            Navigation
+          </label>
+
+          <nav style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            <button
+              onClick={() => setActiveTab("workbench")}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                width: "100%",
+                padding: "10px 14px",
+                borderRadius: "6px",
+                fontSize: "13px",
+                fontWeight: "500",
+                border: "none",
+                cursor: "pointer",
+                background: activeTab === "workbench" ? "#2563eb" : "transparent",
+                color: activeTab === "workbench" ? "#ffffff" : "#94a3b8",
+              }}
+            >
+              <Terminal size={16} /> Workbench
+            </button>
+
+            <button
+              onClick={() => {
+                setActiveTab("dashboard");
+                loadReportsAndStats();
+              }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                width: "100%",
+                padding: "10px 14px",
+                borderRadius: "6px",
+                fontSize: "13px",
+                fontWeight: "500",
+                border: "none",
+                cursor: "pointer",
+                background: activeTab === "dashboard" ? "#2563eb" : "transparent",
+                color: activeTab === "dashboard" ? "#ffffff" : "#94a3b8",
+              }}
+            >
+              <BarChart3 size={16} /> Analytics Dashboard
+            </button>
+          </nav>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "14px", paddingTop: "16px", borderTop: "1px solid #334155" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              padding: "8px 12px",
+              borderRadius: "20px",
+              fontSize: "12px",
+              fontWeight: "500",
+              background: health ? "#064e3b33" : "#450a0a33",
+              color: health ? "#34d399" : "#f87171",
+              border: `1px solid ${health ? "#05966955" : "#dc262655"}`,
+            }}
+          >
+            <Database size={14} />
+            <span>{health ? "MongoDB Connected" : "MongoDB Offline"}</span>
           </div>
 
           <div>
-            <b style={{ fontSize: "16px" }}>
-              QueryPilot
-            </b>
-
+            <div style={{ fontSize: "11px", color: "#64748b", marginBottom: "4px" }}>Signed in as</div>
             <div
               style={{
-                fontSize: "10px",
-                color: "#64748b",
+                fontSize: "13px",
+                color: "#f8fafc",
+                fontWeight: "500",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                marginBottom: "10px",
               }}
-            >
-              Query Advisor
-            </div>
-          </div>
-        </div>
-
-        <SidebarButton
-          active={activeTab === "workbench"}
-          icon={<Terminal size={17} />}
-          label="SQL Workbench"
-          onClick={() => setActiveTab("workbench")}
-        />
-
-        <SidebarButton
-          active={activeTab === "dashboard"}
-          icon={<BarChart3 size={17} />}
-          label="My Dashboard"
-          onClick={() => setActiveTab("dashboard")}
-        />
-
-        <div
-          style={{
-            marginTop: "auto",
-            borderTop: "1px solid #1e293b",
-            paddingTop: "15px",
-          }}
-        >
-          <div
-            style={{
-              padding: "10px",
-              fontSize: "11px",
-              color: "#64748b",
-              marginBottom: "5px",
-            }}
-          >
-            SIGNED IN AS
-          </div>
-
-          <div
-            style={{
-              padding: "10px",
-              background: "#0f172a",
-              borderRadius: "7px",
-              marginBottom: "10px",
-              wordBreak: "break-all",
-            }}
-          >
-            <div
-              style={{
-                fontSize: "12px",
-                color: "#38bdf8",
-              }}
+              title={getDisplayName(currentUser)}
             >
               {getDisplayName(currentUser)}
             </div>
 
-            <div
+            <button
+              onClick={handleLogout}
               style={{
-                fontSize: "10px",
-                color: "#64748b",
-                marginTop: "3px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "6px",
+                width: "100%",
+                padding: "8px",
+                fontSize: "12px",
+                fontWeight: "500",
+                background: "#334155",
+                color: "#f8fafc",
+                border: "none",
+                borderRadius: "6px",
+                cursor: "pointer",
               }}
             >
-              User Account
-            </div>
+              <LogOut size={14} /> Logout
+            </button>
           </div>
-
-          <button
-            onClick={handleLogout}
-            style={{
-              width: "100%",
-              padding: "9px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "7px",
-              background: "#1e293b",
-              border: "1px solid #334155",
-              color: "#f87171",
-              borderRadius: "6px",
-              cursor: "pointer",
-            }}
-          >
-            <LogOut size={15} />
-            Logout
-          </button>
         </div>
       </aside>
 
-      {/* MAIN */}
-
-      <div
-        style={{
-          flex: 1,
-          minWidth: 0,
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        {/* TOP BAR */}
-
-        <header
-          style={{
-            height: "62px",
-            borderBottom: "1px solid #1e293b",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "0 30px",
-            background: "#0f172a",
-          }}
-        >
-          <div>
-            <b style={{ fontSize: "15px" }}>
-              {activeTab === "dashboard"
-                ? "Health & Workload Dashboard"
-                : "SQL Performance Workbench"}
-            </b>
-
-            <div
-              style={{
-                fontSize: "10px",
-                color: "#64748b",
-                marginTop: "2px",
-              }}
-            >
-              AI-Powered Database Query Performance Advisor
-            </div>
-          </div>
-
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-              fontSize: "11px",
-            }}
-          >
-            <span
-              style={{
-                width: "7px",
-                height: "7px",
-                borderRadius: "50%",
-                background: health
-                  ? "#22c55e"
-                  : "#ef4444",
-              }}
-            />
-
-            {health
-              ? "MongoDB Connected"
-              : "Backend Offline"}
-          </div>
-        </header>
-
+      {/* ---------------- MAIN CONTENT AREA ---------------- */}
+      <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", minHeight: "100vh" }}>
         {activeTab === "dashboard" ? (
           <DashboardView
             stats={stats}
             reports={reports}
             refreshing={refreshing}
             onRefresh={loadReportsAndStats}
-            onSelectQuery={(query) => {
-              setSql(query);
+            onSelectQuery={(q) => {
+              setSql(q);
               setActiveTab("workbench");
             }}
           />
         ) : (
-          <main
-            style={{
-              padding: "28px 36px",
-              maxWidth: "1250px",
-              width: "100%",
-              boxSizing: "border-box",
-              margin: "0 auto",
-            }}
-          >
-            {/* HERO */}
-
-            <section
-              className="hero"
-              style={{
-                marginBottom: "20px",
-              }}
-            >
-              <div
-                style={{
-                  marginBottom: "20px",
-                }}
-              >
-                <h1
-                  style={{
-                    fontSize: "28px",
-                    margin: "0 0 8px",
-                  }}
-                >
-                  Analyze Your SQL Queries
+          <main style={{ padding: "28px 36px", maxWidth: "1200px", width: "100%", boxSizing: "border-box" }}>
+            <section className="hero" style={{ marginBottom: "24px" }}>
+              <div>
+                <label>DATABASE PERFORMANCE WORKBENCH</label>
+                <h1>
+                  Analyze. Optimize.
+                  <br />
+                  <em>Perform Better.</em>
                 </h1>
-
-                <p
-                  style={{
-                    color: "#94a3b8",
-                    margin: 0,
-                    maxWidth: "700px",
-                    lineHeight: 1.6,
-                  }}
-                >
-                  Detect inefficient joins, missing indexes,
-                  subqueries, sorting issues and other SQL
-                  performance bottlenecks.
+                <p>
+                  Analyze SQL queries, discover bottlenecks, generate AI-corrected queries,
+                  and export DBA-ready optimization reports.
                 </p>
               </div>
 
-              <div
-                className="heroStats"
-                style={{
-                  display: "grid",
-                  gridTemplateColumns:
-                    "repeat(auto-fit,minmax(180px,1fr))",
-                  gap: "12px",
-                }}
-              >
+              <div className="heroStats" style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
                 <div
-                  onClick={() =>
-                    setSql(SAMPLE_EXPLAINABLE)
-                  }
-                  style={{
-                    cursor: "pointer",
-                    border: "1px solid #334155",
-                    userSelect: "none",
-                    padding: "16px",
-                    borderRadius: "8px",
-                    background: "#111827",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "7px",
-                  }}
+                  onClick={() => setSql(SAMPLE_EXPLAINABLE)}
+                  style={{ cursor: "pointer", border: "1px solid #334155", userSelect: "none" }}
                   title="Click to load Explainable AI sample query"
                 >
                   <Activity color="#38bdf8" />
                   <b>Explainable AI</b>
-                  <small style={{ color: "#64748b" }}>
-                    Rule-based analysis
-                  </small>
+                  <small>Rule-based analysis (Click to test)</small>
                 </div>
 
                 <div
                   onClick={() => setSql(SAMPLE_DBA)}
-                  style={{
-                    cursor: "pointer",
-                    border: "1px solid #334155",
-                    userSelect: "none",
-                    padding: "16px",
-                    borderRadius: "8px",
-                    background: "#111827",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "7px",
-                  }}
+                  style={{ cursor: "pointer", border: "1px solid #334155", userSelect: "none" }}
                   title="Click to load DBA index sample query"
                 >
                   <ShieldCheck color="#10b981" />
                   <b>DBA Ready</b>
-                  <small style={{ color: "#64748b" }}>
-                    Index recommendations
-                  </small>
+                  <small>Index recommendations (Click to test)</small>
                 </div>
 
                 <div
                   onClick={() => setSql(SAMPLE_MEDIUM)}
-                  style={{
-                    cursor: "pointer",
-                    border: "1px solid #334155",
-                    userSelect: "none",
-                    padding: "16px",
-                    borderRadius: "8px",
-                    background: "#111827",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "7px",
-                  }}
-                  title="Click to load Medium Risk query"
+                  style={{ cursor: "pointer", border: "1px solid #334155", userSelect: "none" }}
+                  title="Click to load Aggregation / Medium Risk query"
                 >
                   <Gauge color="#f59e0b" />
                   <b>Medium Risk</b>
-                  <small style={{ color: "#64748b" }}>
-                    Aggregation test
-                  </small>
+                  <small>Aggregation buffer (Click to test)</small>
                 </div>
 
                 <div
-                  onClick={() =>
-                    setSql(SAMPLE_SUBQUERY)
-                  }
-                  style={{
-                    cursor: "pointer",
-                    border: "1px solid #334155",
-                    userSelect: "none",
-                    padding: "16px",
-                    borderRadius: "8px",
-                    background: "#111827",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "7px",
-                  }}
+                  onClick={() => setSql(SAMPLE_SUBQUERY)}
+                  style={{ cursor: "pointer", border: "1px solid #334155", userSelect: "none" }}
                   title="Click to load Nested Subquery test"
                 >
                   <Layers color="#a855f7" />
                   <b>Subquery Test</b>
-                  <small style={{ color: "#64748b" }}>
-                    IN sub-loop check
-                  </small>
+                  <small>IN () sub-loop check (Click to test)</small>
                 </div>
               </div>
             </section>
 
-            {/* QUERY + PERFORMANCE */}
-
-            <section
-              className="layout"
-              style={{
-                display: "grid",
-                gridTemplateColumns:
-                  "repeat(auto-fit,minmax(350px,1fr))",
-                gap: "16px",
-              }}
-            >
+            <section className="layout">
               <div className="card editor">
                 <div className="head">
                   <div>
                     <h2>SQL Query</h2>
-                    <small>
-                      Paste a query for analysis
-                    </small>
+                    <small>Paste a query for analysis</small>
                   </div>
-
-                  <button
-                    onClick={() =>
-                      setSql(SAMPLE_DEFAULT)
-                    }
-                  >
-                    Load Default Sample
-                  </button>
+                  <button onClick={() => setSql(SAMPLE_DEFAULT)}>Load Default Sample</button>
                 </div>
-
                 <textarea
                   value={sql}
-                  onChange={(e) =>
-                    setSql(e.target.value)
-                  }
-                  rows={10}
-                  style={{
-                    width: "100%",
-                    boxSizing: "border-box",
-                    background: "#020617",
-                    color: "#38bdf8",
-                    border: "1px solid #334155",
-                    borderRadius: "7px",
-                    padding: "14px",
-                    fontFamily:
-                      "Consolas, Monaco, monospace",
-                    resize: "vertical",
-                    outline: "none",
-                  }}
+                  onChange={(e) => setSql(e.target.value)}
+                  rows={8}
                 />
-
-                <div
-                  className="actions"
-                  style={{
-                    display: "flex",
-                    gap: "8px",
-                    marginTop: "12px",
-                  }}
-                >
-                  <button
-                    className="primary"
-                    onClick={analyze}
-                    disabled={loading}
-                  >
-                    {loading
-                      ? "Analyzing..."
-                      : "Analyze Query →"}
+                <div className="actions">
+                  <button className="primary" onClick={analyze} disabled={loading}>
+                    {loading ? "Analyzing..." : "Analyze Query →"}
                   </button>
-
-                  <button
-                    onClick={() => setSql("")}
-                  >
-                    Clear
-                  </button>
+                  <button onClick={() => setSql("")}>Clear</button>
                 </div>
               </div>
 
               <div className="card">
                 <div className="head">
                   <div>
-                    <h2>
-                      Performance Overview
-                    </h2>
-                    <small>
-                      Static analysis result
-                    </small>
+                    <h2>Performance Overview</h2>
+                    <small>Static analysis result</small>
                   </div>
-
                   {report && (
-                    <span
-                      className={
-                        "pill " +
-                        getRiskClass(
-                          report.analysis.riskLevel
-                        )
-                      }
-                    >
+                    <span className={"pill " + report.analysis.riskLevel.toLowerCase()}>
                       {report.analysis.riskLevel} Risk
                     </span>
                   )}
                 </div>
-
                 {report ? (
                   <>
-                    <div
-                      className="scoreRow"
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "18px",
-                        margin: "20px 0",
-                      }}
-                    >
-                      <div
-                        className="score"
-                        style={{
-                          fontSize: "48px",
-                          fontWeight: "800",
-                          color: "#38bdf8",
-                        }}
-                      >
-                        {
-                          report.analysis
-                            .performanceScore
-                        }
-                      </div>
-
+                    <div className="scoreRow">
+                      <div className="score">{report.analysis.performanceScore}</div>
                       <div>
-                        <b>
-                          Performance Score / 100
-                        </b>
-
-                        <p
-                          style={{
-                            color: "#94a3b8",
-                          }}
-                        >
-                          {
-                            report.analysis
-                              .executionEstimate
-                          }
-                        </p>
+                        <b>Performance Score / 100</b>
+                        <p>{report.analysis.executionEstimate}</p>
                       </div>
                     </div>
-
-                    <div
-                      className="metrics"
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns:
-                          "repeat(2,1fr)",
-                        gap: "10px",
-                      }}
-                    >
-                      <Metric
-                        n="Query Type"
-                        v={
-                          report.analysis
-                            .queryType
-                        }
-                      />
-
-                      <Metric
-                        n="Joins"
-                        v={
-                          report.analysis.metrics
-                            ?.joins || 0
-                        }
-                      />
-
-                      <Metric
-                        n="Filters"
-                        v={
-                          report.analysis.metrics
-                            ?.filters || 0
-                        }
-                      />
-
-                      <Metric
-                        n="Functions"
-                        v={
-                          report.analysis.metrics
-                            ?.functions || 0
-                        }
-                      />
+                    <div className="metrics">
+                      <Metric n="Query Type" v={report.analysis.queryType} />
+                      <Metric n="Joins" v={report.analysis.metrics.joins} />
+                      <Metric n="Filters" v={report.analysis.metrics.filters} />
+                      <Metric n="Functions" v={report.analysis.metrics.functions} />
                     </div>
                   </>
                 ) : (
-                  <div className="empty">
-                    Run an analysis to see
-                    performance metrics.
-                  </div>
+                  <div className="empty">Run an analysis to see performance metrics.</div>
                 )}
               </div>
             </section>
-
-            {/* CORRECTED QUERY */}
 
             {report?.analysis?.correctedQuery && (
               <section
@@ -1498,83 +685,57 @@ export default function App() {
                 style={{
                   marginTop: "16px",
                   border: "1px solid #059669",
-                  background:
-                    "linear-gradient(180deg,#064e3b15 0%,transparent 100%)",
+                  background: "linear-gradient(180deg, #064e3b15 0%, transparent 100%)",
                 }}
               >
                 <div className="head">
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "10px",
-                    }}
-                  >
-                    <div
-                      style={{
-                        background: "#059669",
-                        padding: "6px",
-                        borderRadius: "6px",
-                        display: "flex",
-                      }}
-                    >
-                      <Wand2
-                        size={16}
-                        color="#ffffff"
-                      />
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <div style={{ background: "#059669", padding: "6px", borderRadius: "6px", display: "flex" }}>
+                      <Wand2 size={16} color="#ffffff" />
                     </div>
-
                     <div>
-                      <h2
-                        style={{
-                          color: "#34d399",
-                          margin: 0,
-                        }}
-                      >
-                        AI-Recommended Corrected
-                        Query
-                      </h2>
-
-                      <small>
-                        Optimized query alternative
-                      </small>
+                      <h2 style={{ color: "#34d399", margin: 0 }}>AI-Recommended Corrected Query</h2>
+                      <small>Optimized to avoid full-table scans and non-sargable predicates</small>
                     </div>
                   </div>
 
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: "8px",
-                    }}
-                  >
+                  <div style={{ display: "flex", gap: "8px" }}>
                     <button
-                      onClick={() =>
-                        copyToClipboard(
-                          report.analysis
-                            .correctedQuery
-                        )
-                      }
+                      onClick={() => copyToClipboard(report.analysis.correctedQuery)}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "5px",
+                        background: "#1e293b",
+                        border: "1px solid #334155",
+                        color: "#f8fafc",
+                        padding: "6px 12px",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        fontSize: "12px",
+                      }}
                     >
-                      {copied ? (
-                        <CheckCheck size={14} />
-                      ) : (
-                        <Copy size={14} />
-                      )}
-
-                      {copied
-                        ? "Copied!"
-                        : "Copy SQL"}
+                      {copied ? <CheckCheck size={14} color="#34d399" /> : <Copy size={14} />}
+                      {copied ? "Copied!" : "Copy SQL"}
                     </button>
 
                     <button
-                      onClick={() =>
-                        setSql(
-                          report.analysis
-                            .correctedQuery
-                        )
-                      }
+                      onClick={() => setSql(report.analysis.correctedQuery)}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "5px",
+                        background: "#059669",
+                        border: "none",
+                        color: "#ffffff",
+                        padding: "6px 14px",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        fontWeight: "600",
+                        fontSize: "12px",
+                      }}
                     >
-                      <Zap size={14} /> Apply
+                      <Zap size={14} /> Apply to Editor
                     </button>
                   </div>
                 </div>
@@ -1585,12 +746,11 @@ export default function App() {
                     padding: "16px",
                     borderRadius: "6px",
                     color: "#38bdf8",
-                    fontFamily:
-                      "Consolas, Monaco, monospace",
+                    fontFamily: "Consolas, Monaco, monospace",
                     fontSize: "13.5px",
                     overflowX: "auto",
                     lineHeight: "1.6",
-                    margin: "12px 0",
+                    margin: "12px 0 10px 0",
                     border: "1px solid #1e293b",
                   }}
                 >
@@ -1599,304 +759,89 @@ export default function App() {
               </section>
             )}
 
-            {/* FINDINGS */}
-
             {report && (
               <>
-                <section
-                  className="layout lower"
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns:
-                      "repeat(auto-fit,minmax(350px,1fr))",
-                    gap: "16px",
-                    marginTop: "16px",
-                  }}
-                >
-                  <Panel
-                    title="Performance Bottlenecks"
-                    icon={<TriangleAlert />}
-                  >
-                    {(report.analysis.findings ||
-                      []).map((finding, index) => (
-                      <div
-                        className="finding"
-                        key={index}
-                        style={{
-                          padding: "12px 0",
-                          borderBottom:
-                            "1px solid #1e293b",
-                        }}
-                      >
-                        <span
-                          style={{
-                            color: "#f59e0b",
-                            fontSize: "11px",
-                            fontWeight: "bold",
-                          }}
-                        >
-                          {finding.severity}
-                        </span>
-
-                        <b
-                          style={{
-                            display: "block",
-                            marginTop: "4px",
-                          }}
-                        >
-                          {finding.title}
-                        </b>
-
-                        <p
-                          style={{
-                            color: "#94a3b8",
-                            fontSize: "13px",
-                          }}
-                        >
-                          {finding.detail}
-                        </p>
+                <section className="layout lower">
+                  <Panel title="Performance Bottlenecks" icon={<TriangleAlert />}>
+                    {report.analysis.findings.map((f, i) => (
+                      <div className="finding" key={i}>
+                        <span>{f.severity}</span>
+                        <b>{f.title}</b>
+                        <p>{f.detail}</p>
                       </div>
                     ))}
                   </Panel>
-
-                  <Panel
-                    title="Index Recommendations"
-                    icon={<Database />}
-                  >
-                    {(report.analysis.indexes ||
-                      []).map((index, i) => (
-                      <div
-                        className="index"
-                        key={i}
-                        style={{
-                          display: "flex",
-                          justifyContent:
-                            "space-between",
-                          gap: "10px",
-                          padding: "12px 0",
-                          borderBottom:
-                            "1px solid #1e293b",
-                        }}
-                      >
+                  <Panel title="Index Recommendations" icon={<Database />}>
+                    {report.analysis.indexes.map((x, i) => (
+                      <div className="index" key={i}>
                         <div>
-                          <b>{index.column}</b>
-
-                          <p
-                            style={{
-                              color: "#94a3b8",
-                              fontSize: "13px",
-                            }}
-                          >
-                            {index.recommendation}
-                          </p>
+                          <b>{x.column}</b>
+                          <p>{x.recommendation}</p>
                         </div>
-
-                        <span
-                          style={{
-                            color: "#38bdf8",
-                            fontSize: "11px",
-                          }}
-                        >
-                          {index.priority}
-                        </span>
+                        <span>{x.priority}</span>
                       </div>
                     ))}
                   </Panel>
                 </section>
 
-                {/* OPTIMIZATIONS */}
-
-                <section
-                  className="card"
-                  style={{
-                    marginTop: "16px",
-                  }}
-                >
+                <section className="card">
                   <div className="head">
                     <div>
-                      <h2>
-                        Optimization
-                        Recommendations
-                      </h2>
-
-                      <small>
-                        Recommended actions for
-                        the DBA
-                      </small>
+                      <h2>Optimization Recommendations</h2>
+                      <small>Recommended actions for the DBA</small>
                     </div>
-
                     <button onClick={download}>
-                      <Download size={15} />
-                      Export PDF Report
+                      <Download size={15} /> Export PDF Report
                     </button>
                   </div>
-
                   <ol>
-                    {(
-                      report.analysis
-                        .optimizations || []
-                    ).map((optimization, i) => (
-                      <li key={i}>
-                        {optimization}
-                      </li>
+                    {report.analysis.optimizations.map((x, i) => (
+                      <li key={i}>{x}</li>
                     ))}
                   </ol>
                 </section>
               </>
             )}
 
-            {/* USER HISTORY */}
-
-            <section
-              className="card history"
-              style={{
-                marginTop: "16px",
-              }}
-            >
+            <section className="card history">
               <div className="head">
                 <div>
                   <h2>Recent Reports</h2>
-
-                  <small>
-                    Scoped to{" "}
-                    {getDisplayName(currentUser)}
-                  </small>
+                  <small>Scoped to {getDisplayName(currentUser)}</small>
                 </div>
-
-                <button
-                  onClick={loadReportsAndStats}
-                  disabled={refreshing}
-                >
-                  <RefreshCw
-                    size={15}
-                    className={
-                      refreshing
-                        ? "animate-spin"
-                        : ""
-                    }
-                  />
-
-                  {refreshing
-                    ? "Refreshing..."
-                    : "Refresh"}
+                <button onClick={loadReportsAndStats} disabled={refreshing}>
+                  <RefreshCw size={15} className={refreshing ? "animate-spin" : ""} />{" "}
+                  {refreshing ? "Refreshing..." : "Refresh"}
                 </button>
               </div>
-
               {reports.length ? (
-                reports.map((item, index) => (
-                  <div
-                    className="historyRow"
-                    key={
-                      item._id ||
-                      item.createdAt ||
-                      index
-                    }
-                    style={{
-                      padding: "12px 0",
-                      borderBottom:
-                        "1px solid #1e293b",
-                      display: "flex",
-                      justifyContent:
-                        "space-between",
-                      gap: "15px",
-                    }}
-                  >
-                    <b>{item.title}</b>
-
-                    <span
-                      style={{
-                        color: "#94a3b8",
-                        fontSize: "12px",
-                      }}
-                    >
-                      {new Date(
-                        item.createdAt
-                      ).toLocaleString()}{" "}
-                      • Score{" "}
-                      {item.analysis
-                        ?.performanceScore || 0}
-                      /100
+                reports.map((r, i) => (
+                  <div className="historyRow" key={i}>
+                    <b>{r.title}</b>
+                    <span>
+                      {new Date(r.createdAt).toLocaleString()} • Score{" "}
+                      {r.analysis?.performanceScore || 0}/100
                     </span>
                   </div>
                 ))
               ) : (
-                <div className="empty">
-                  No saved reports found for
-                  your account.
-                </div>
+                <div className="empty">No saved reports found for your account.</div>
               )}
             </section>
           </main>
         )}
 
-        <footer
-          style={{
-            marginTop: "auto",
-            padding: "16px 36px",
-            color: "#64748b",
-            fontSize: "11px",
-            borderTop: "1px solid #1e293b",
-          }}
-        >
-          MongoDB • Express.js • React.js • Node.js
-          {" | "}
-          AI-Powered Database Query Performance
-          Advisor
+        <footer style={{ marginTop: "auto", padding: "16px 36px" }}>
+          MongoDB • Express.js • React.js • Node.js | AI-Powered Database Query Performance Advisor
         </footer>
       </div>
     </div>
   );
 }
 
-/* =========================================================
-   SIDEBAR BUTTON
-========================================================= */
+// ---------------- WELCOME SCREEN ---------------- //
 
-function SidebarButton({
-  active,
-  icon,
-  label,
-  onClick,
-}) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        width: "100%",
-        display: "flex",
-        alignItems: "center",
-        gap: "10px",
-        padding: "11px 12px",
-        marginBottom: "5px",
-        borderRadius: "7px",
-        border: active
-          ? "1px solid #2563eb"
-          : "1px solid transparent",
-        background: active
-          ? "#172554"
-          : "transparent",
-        color: active
-          ? "#ffffff"
-          : "#94a3b8",
-        cursor: "pointer",
-        textAlign: "left",
-      }}
-    >
-      {icon}
-      {label}
-    </button>
-  );
-}
-
-/* =========================================================
-   WELCOME SCREEN
-========================================================= */
-
-function WelcomeScreen({
-  onGetStarted,
-  onRegister,
-  onAdminLogin,
-}) {
+function WelcomeScreen({ onGetStarted, onRegister }) {
   return (
     <div
       style={{
@@ -1906,8 +851,7 @@ function WelcomeScreen({
         flexDirection: "column",
         justifyContent: "space-between",
         color: "#f8fafc",
-        fontFamily:
-          "system-ui, -apple-system, sans-serif",
+        fontFamily: "system-ui, -apple-system, sans-serif",
       }}
     >
       <header
@@ -1919,13 +863,7 @@ function WelcomeScreen({
           borderBottom: "1px solid #1e293b",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "12px",
-          }}
-        >
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
           <div
             style={{
               width: "36px",
@@ -1937,304 +875,227 @@ function WelcomeScreen({
               justifyContent: "center",
             }}
           >
-            <Zap size={22} />
+            <Zap size={22} color="#ffffff" />
           </div>
-
           <div>
-            <h1
-              style={{
-                fontSize: "18px",
-                fontWeight: "bold",
-                margin: 0,
-              }}
-            >
-              QueryPilot
-            </h1>
-
-            <span
-              style={{
-                fontSize: "11px",
-                color: "#64748b",
-              }}
-            >
-              Query Performance Advisor
-            </span>
+            <h1 style={{ fontSize: "18px", fontWeight: "bold", margin: 0 }}>QueryPilot</h1>
+            <span style={{ fontSize: "11px", color: "#64748b" }}>Query Performance Advisor</span>
           </div>
         </div>
 
-        <div
-          style={{
-            display: "flex",
-            gap: "10px",
-            alignItems: "center",
-          }}
-        >
-          <button onClick={onGetStarted}>
+        <div style={{ display: "flex", gap: "14px", alignItems: "center" }}>
+          <button
+            onClick={onGetStarted}
+            style={{
+              background: "transparent",
+              border: "1px solid #334155",
+              color: "#cbd5e1",
+              padding: "8px 18px",
+              borderRadius: "8px",
+              fontSize: "13px",
+              cursor: "pointer",
+            }}
+          >
             Sign In
           </button>
-
           <button
             onClick={onRegister}
             style={{
               background: "#2563eb",
-              color: "#fff",
               border: "none",
-              padding: "8px 16px",
-              borderRadius: "7px",
+              color: "#ffffff",
+              padding: "8px 18px",
+              borderRadius: "8px",
+              fontSize: "13px",
+              fontWeight: "600",
               cursor: "pointer",
             }}
           >
             Get Started Free
           </button>
-
-          <button
-            onClick={onAdminLogin}
-            style={{
-              background: "#1e293b",
-              color: "#cbd5e1",
-              border: "1px solid #334155",
-              padding: "8px 16px",
-              borderRadius: "7px",
-              cursor: "pointer",
-            }}
-          >
-            Admin Login
-          </button>
         </div>
       </header>
 
-      <main
-        style={{
-          maxWidth: "1080px",
-          margin: "0 auto",
-          padding: "60px 24px",
-          textAlign: "center",
-        }}
-      >
-        <h1
-          style={{
-            fontSize: "44px",
-            fontWeight: 800,
-            margin: "0 0 18px",
-          }}
-        >
-          Welcome to{" "}
-          <span style={{ color: "#38bdf8" }}>
-            Query Advisor
-          </span>
+      <main style={{ maxWidth: "1080px", margin: "0 auto", padding: "60px 24px", textAlign: "center" }}>
+        <h1 style={{ fontSize: "44px", fontWeight: 800, margin: "0 0 18px 0" }}>
+          Welcome to <span style={{ color: "#38bdf8" }}>Query Advisor</span>
         </h1>
-
-        <p
-          style={{
-            fontSize: "16px",
-            color: "#94a3b8",
-            maxWidth: "680px",
-            margin: "0 auto 36px",
-            lineHeight: 1.7,
-          }}
-        >
-          Diagnose database bottlenecks,
-          identify indexing opportunities,
-          analyze SQL queries and generate
-          optimization reports.
+        <p style={{ fontSize: "16px", color: "#94a3b8", maxWidth: "680px", margin: "0 auto 36px auto" }}>
+          Diagnose database bottlenecks, eliminate full table scans, generate DBA-ready composite
+          indexes, and inspect AI-corrected SQL queries.
         </p>
 
-        <button
-          onClick={onGetStarted}
-          style={{
-            background: "#2563eb",
-            border: "none",
-            color: "#ffffff",
-            padding: "12px 28px",
-            borderRadius: "8px",
-            fontSize: "14px",
-            fontWeight: "600",
-            cursor: "pointer",
-          }}
-        >
-          Launch Advisor →
-        </button>
+        <div style={{ display: "flex", justifyContent: "center", gap: "16px" }}>
+          <button
+            onClick={onGetStarted}
+            style={{
+              background: "#2563eb",
+              border: "none",
+              color: "#ffffff",
+              padding: "12px 28px",
+              borderRadius: "8px",
+              fontSize: "14px",
+              fontWeight: "600",
+              cursor: "pointer",
+            }}
+          >
+            Launch Advisor →
+          </button>
+        </div>
       </main>
 
-      <footer
-        style={{
-          borderTop: "1px solid #1e293b",
-          padding: "20px 48px",
-          textAlign: "center",
-          fontSize: "12px",
-          color: "#64748b",
-        }}
-      >
-        QueryPilot • Full-Stack Query Performance
-        Advisor
+      <footer style={{ borderTop: "1px solid #1e293b", padding: "20px 48px", textAlign: "center", fontSize: "12px", color: "#64748b" }}>
+        QueryPilot • Full-Stack Query Performance Advisor
       </footer>
     </div>
   );
 }
 
-/* =========================================================
-   AUTH SCREEN
-========================================================= */
+// ---------------- DASHBOARD VIEW ---------------- //
 
-function AuthScreen({
-  initialMode = "login",
-  onLoginSuccess,
-  onBackToWelcome,
-}) {
-  const [mode, setMode] = useState(
-    initialMode === "admin"
-      ? "admin"
-      : initialMode
+function DashboardView({ stats, reports, refreshing, onRefresh, onSelectQuery }) {
+  const [searchTerm, setSearchTerm] = useState("");
+  const lowRiskCount = reports.filter((r) => r.analysis?.riskLevel === "Low").length;
+  const mediumRiskCount = reports.filter((r) => r.analysis?.riskLevel === "Medium").length;
+  const highRiskCount = stats.highRisk || reports.filter((r) => r.analysis?.riskLevel === "High").length;
+
+  const filteredReports = reports.filter((r) =>
+    (r.sql || "").toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  return (
+    <main style={{ padding: "28px 36px", maxWidth: "1200px", width: "100%", boxSizing: "border-box" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+        <div>
+          <h1 style={{ margin: "0 0 6px 0", fontSize: "22px" }}>Health & Workload Dashboard</h1>
+          <p style={{ margin: 0, color: "#94a3b8", fontSize: "14px" }}>MongoDB Aggregated Performance</p>
+        </div>
+        <button
+          onClick={onRefresh}
+          disabled={refreshing}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            padding: "8px 14px",
+            background: "#1e293b",
+            color: "#ffffff",
+            border: "1px solid #334155",
+            borderRadius: "6px",
+            cursor: "pointer",
+          }}
+        >
+          <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} /> Refresh Stats
+        </button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "16px", marginBottom: "24px" }}>
+        <DashboardCard title="Total Queries" value={stats.total || reports.length} icon={<Layers color="#38bdf8" size={24} />} detail="Audited sessions" />
+        <DashboardCard title="Avg Score" value={`${stats.averageScore || 0} / 100`} icon={<Gauge color="#10b981" size={24} />} detail="Across your queries" />
+        <DashboardCard title="High Risk Queries" value={highRiskCount} icon={<ShieldAlert color="#ef4444" size={24} />} detail="Requires indexing" />
+      </div>
+
+      <div className="card" style={{ padding: "20px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <h3 style={{ margin: 0, fontSize: "16px" }}>Query Workload History</h3>
+          <input
+            type="text"
+            placeholder="Search queries..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{
+              background: "#0f172a",
+              border: "1px solid #334155",
+              borderRadius: "4px",
+              padding: "6px 10px",
+              fontSize: "12px",
+              color: "#f8fafc",
+            }}
+          />
+        </div>
+
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", textAlign: "left" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid #334155", color: "#94a3b8" }}>
+                <th style={{ padding: "8px 10px" }}>SQL Snippet</th>
+                <th style={{ padding: "8px 10px" }}>Score</th>
+                <th style={{ padding: "8px 10px" }}>Risk</th>
+                <th style={{ padding: "8px 10px" }}>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredReports.slice(0, 10).map((r, i) => (
+                <tr key={i} style={{ borderBottom: "1px solid #1e293b" }}>
+                  <td style={{ padding: "10px", fontFamily: "monospace", color: "#38bdf8", maxWidth: "230px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {r.sql}
+                  </td>
+                  <td style={{ padding: "10px", fontWeight: "bold" }}>{r.analysis?.performanceScore || 0}</td>
+                  <td style={{ padding: "10px" }}>
+                    <span className={"pill " + (r.analysis?.riskLevel?.toLowerCase() || "low")}>
+                      {r.analysis?.riskLevel || "Low"}
+                    </span>
+                  </td>
+                  <td style={{ padding: "10px" }}>
+                    <button
+                      onClick={() => onSelectQuery(r.sql)}
+                      style={{
+                        background: "#2563eb",
+                        border: "none",
+                        color: "#fff",
+                        padding: "4px 8px",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        fontSize: "11px",
+                      }}
+                    >
+                      Load
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+function DashboardCard({ title, value, icon, detail }) {
+  return (
+    <div className="card" style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "8px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontSize: "13px", color: "#94a3b8" }}>{title}</span>
+        {icon}
+      </div>
+      <div style={{ fontSize: "24px", fontWeight: "bold", color: "#f8fafc" }}>{value}</div>
+      <small style={{ color: "#64748b", fontSize: "11px" }}>{detail}</small>
+    </div>
+  );
+}
+
+// ---------------- AUTHENTICATION SCREEN ---------------- //
+
+function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
 
-  const isRegister = mode === "register";
-  const isAdmin = mode === "admin";
-
-  const handleSubmit = async (event) => {
-    event.preventDefault();
-
-    setError("");
-
-    if (!email.trim() || !password.trim()) {
-      setError(
-        "Enter email and password."
-      );
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const loginId = email.trim();
+    if (!loginId || !password.trim()) {
+      setError("Enter a username/email and password.");
       return;
     }
 
-    setLoading(true);
-
     try {
-      if (isRegister) {
-        const response = await fetch(
-          `${API}/auth/register`,
-          {
-            method: "POST",
+      localStorage.setItem("advisor_token", "demo-token");
+      localStorage.setItem("advisor_user", loginId);
+    } catch (err) {}
 
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-
-            body: JSON.stringify({
-              email: email.trim(),
-              password,
-            }),
-          }
-        );
-
-        const data =
-          await response.json();
-
-        if (!data.ok) {
-          setError(
-            data.error ||
-              "Registration failed."
-          );
-          return;
-        }
-
-        localStorage.setItem(
-          "advisor_token",
-          data.token
-        );
-
-        localStorage.setItem(
-          "advisor_user",
-          JSON.stringify(data.user)
-        );
-
-        onLoginSuccess(data.user);
-
-        return;
-      }
-
-      /* LOGIN */
-
-      const response = await fetch(
-        `${API}/auth/login`,
-        {
-          method: "POST",
-
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-
-          body: JSON.stringify({
-            email: email.trim(),
-            password,
-          }),
-        }
-      );
-
-      const data = await response.json();
-
-      if (!data.ok) {
-        setError(
-          data.error ||
-            "Invalid email or password."
-        );
-        return;
-      }
-
-      /*
-        Extra frontend check:
-        Admin Login screen should only
-        accept admin account.
-      */
-
-      if (
-        isAdmin &&
-        data.user.role !== "admin"
-      ) {
-        setError(
-          "This is not an administrator account."
-        );
-        return;
-      }
-
-      /*
-        Normal login screen should not
-        enter admin dashboard.
-      */
-
-      if (
-        !isAdmin &&
-        data.user.role === "admin"
-      ) {
-        setError(
-          "Please use Admin Login for administrator access."
-        );
-        return;
-      }
-
-      localStorage.setItem(
-        "advisor_token",
-        data.token
-      );
-
-      localStorage.setItem(
-        "advisor_user",
-        JSON.stringify(data.user)
-      );
-
-      onLoginSuccess(data.user);
-    } catch (error) {
-      console.error(error);
-
-      setError(
-        "Cannot connect to backend. Check your API/server."
-      );
-    } finally {
-      setLoading(false);
-    }
+    onLoginSuccess(loginId);
   };
 
   return (
@@ -2254,197 +1115,40 @@ function AuthScreen({
           borderRadius: "12px",
           padding: "36px",
           width: "100%",
-          maxWidth: "410px",
+          maxWidth: "400px",
           border: "1px solid #334155",
           color: "#f8fafc",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: "20px",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-            }}
-          >
-            {isAdmin ? (
-              <ShieldCheck
-                size={23}
-                color="#10b981"
-              />
-            ) : (
-              <Zap
-                size={23}
-                color="#3b82f6"
-              />
-            )}
-
-            <h2
-              style={{
-                margin: 0,
-                fontSize: "20px",
-              }}
-            >
-              QueryPilot
-            </h2>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <Zap size={22} color="#3b82f6" />
+            <h2 style={{ margin: 0, fontSize: "20px" }}>QueryPilot</h2>
           </div>
-
-          <button
-            onClick={onBackToWelcome}
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "#64748b",
-              fontSize: "12px",
-              cursor: "pointer",
-            }}
-          >
+          <button onClick={onBackToWelcome} style={{ background: "transparent", border: "none", color: "#64748b", fontSize: "12px", cursor: "pointer" }}>
             ← Back
           </button>
         </div>
 
-        <div
-          style={{
-            display: "flex",
-            gap: "6px",
-            marginBottom: "20px",
-          }}
-        >
-          <button
-            onClick={() => setMode("login")}
-            style={{
-              flex: 1,
-              padding: "8px",
-              borderRadius: "6px",
-              border: "1px solid #334155",
-              background:
-                mode === "login"
-                  ? "#2563eb"
-                  : "#0f172a",
-              color: "#fff",
-              cursor: "pointer",
-            }}
-          >
-            User Login
-          </button>
-
-          <button
-            onClick={() => setMode("register")}
-            style={{
-              flex: 1,
-              padding: "8px",
-              borderRadius: "6px",
-              border: "1px solid #334155",
-              background:
-                mode === "register"
-                  ? "#2563eb"
-                  : "#0f172a",
-              color: "#fff",
-              cursor: "pointer",
-            }}
-          >
-            Register
-          </button>
-
-          <button
-            onClick={() => setMode("admin")}
-            style={{
-              flex: 1,
-              padding: "8px",
-              borderRadius: "6px",
-              border: "1px solid #334155",
-              background:
-                mode === "admin"
-                  ? "#059669"
-                  : "#0f172a",
-              color: "#fff",
-              cursor: "pointer",
-            }}
-          >
-            Admin
-          </button>
-        </div>
-
-        <h3
-          style={{
-            margin: "0 0 16px",
-            fontSize: "17px",
-          }}
-        >
-          {isRegister
-            ? "Create User Account"
-            : isAdmin
-            ? "Administrator Login"
-            : "User Login"}
-        </h3>
-
-        {isAdmin && (
-          <div
-            style={{
-              background: "#064e3b",
-              border: "1px solid #047857",
-              color: "#a7f3d0",
-              padding: "10px",
-              borderRadius: "6px",
-              fontSize: "12px",
-              marginBottom: "14px",
-            }}
-          >
-            Administrator access is restricted
-            to the two configured admin accounts.
-          </div>
-        )}
+        <h3 style={{ margin: "0 0 16px 0", fontSize: "16px" }}>Sign in to your account</h3>
 
         {error && (
-          <div
-            style={{
-              background: "#450a0a",
-              color: "#f87171",
-              padding: "10px",
-              borderRadius: "6px",
-              fontSize: "13px",
-              marginBottom: "14px",
-            }}
-          >
+          <div style={{ background: "#450a0a", color: "#f87171", padding: "10px", borderRadius: "6px", fontSize: "13px", marginBottom: "14px" }}>
             {error}
           </div>
         )}
 
-        <form
-          onSubmit={handleSubmit}
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "14px",
-          }}
-        >
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
           <div>
-            <label
-              style={{
-                display: "block",
-                fontSize: "12px",
-                color: "#94a3b8",
-                marginBottom: "6px",
-              }}
-            >
-              Email
+            <label style={{ display: "block", fontSize: "12px", color: "#94a3b8", marginBottom: "6px" }}>
+              Username or Email
             </label>
-
             <input
-              type="email"
+              type="text"
               required
-              placeholder="user@example.com"
+              placeholder="e.g. user@company.com"
               value={email}
-              onChange={(event) =>
-                setEmail(event.target.value)
-              }
+              onChange={(e) => setEmail(e.target.value)}
               style={{
                 width: "100%",
                 padding: "10px 12px",
@@ -2458,25 +1162,15 @@ function AuthScreen({
           </div>
 
           <div>
-            <label
-              style={{
-                display: "block",
-                fontSize: "12px",
-                color: "#94a3b8",
-                marginBottom: "6px",
-              }}
-            >
+            <label style={{ display: "block", fontSize: "12px", color: "#94a3b8", marginBottom: "6px" }}>
               Password
             </label>
-
             <input
               type="password"
               required
               placeholder="••••••••"
               value={password}
-              onChange={(event) =>
-                setPassword(event.target.value)
-              }
+              onChange={(e) => setPassword(e.target.value)}
               style={{
                 width: "100%",
                 padding: "10px 12px",
@@ -2491,29 +1185,18 @@ function AuthScreen({
 
           <button
             type="submit"
-            disabled={loading}
             style={{
               marginTop: "8px",
               padding: "11px",
-              background: isAdmin
-                ? "#059669"
-                : "#2563eb",
+              background: "#2563eb",
               color: "#ffffff",
               border: "none",
               borderRadius: "6px",
               fontWeight: "600",
-              cursor: loading
-                ? "not-allowed"
-                : "pointer",
+              cursor: "pointer",
             }}
           >
-            {loading
-              ? "Please wait..."
-              : isRegister
-              ? "Create Account →"
-              : isAdmin
-              ? "Admin Sign In →"
-              : "Sign In →"}
+            Sign In →
           </button>
         </form>
       </div>
@@ -2521,1538 +1204,27 @@ function AuthScreen({
   );
 }
 
-/* =========================================================
-   USER DASHBOARD
-========================================================= */
-
-function DashboardView({
-  stats,
-  reports,
-  refreshing,
-  onRefresh,
-  onSelectQuery,
-}) {
-  const [searchTerm, setSearchTerm] =
-    useState("");
-
-  const highRiskCount =
-    stats.highRisk ||
-    reports.filter(
-      (report) =>
-        report.analysis?.riskLevel ===
-        "High"
-    ).length;
-
-  const filteredReports =
-    reports.filter((report) =>
-      (report.sql || "")
-        .toLowerCase()
-        .includes(
-          searchTerm.toLowerCase()
-        )
-    );
-
-  return (
-    <main
-      style={{
-        padding: "28px 36px",
-        maxWidth: "1200px",
-        width: "100%",
-        boxSizing: "border-box",
-        margin: "0 auto",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: "20px",
-        }}
-      >
-        <div>
-          <h1
-            style={{
-              margin: "0 0 6px",
-              fontSize: "22px",
-            }}
-          >
-            Health & Workload Dashboard
-          </h1>
-
-          <p
-            style={{
-              margin: 0,
-              color: "#94a3b8",
-              fontSize: "14px",
-            }}
-          >
-            Your personal query performance
-            history
-          </p>
-        </div>
-
-        <button
-          onClick={onRefresh}
-          disabled={refreshing}
-        >
-          <RefreshCw
-            size={14}
-            className={
-              refreshing
-                ? "animate-spin"
-                : ""
-            }
-          />
-
-          {refreshing
-            ? "Refreshing..."
-            : "Refresh Stats"}
-        </button>
-      </div>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns:
-            "repeat(auto-fit,minmax(220px,1fr))",
-          gap: "16px",
-          marginBottom: "24px",
-        }}
-      >
-        <DashboardCard
-          title="Total Queries"
-          value={
-            stats.total ||
-            reports.length
-          }
-          icon={
-            <Layers
-              color="#38bdf8"
-              size={24}
-            />
-          }
-          detail="Your analyzed queries"
-        />
-
-        <DashboardCard
-          title="Average Score"
-          value={`${stats.averageScore || 0} / 100`}
-          icon={
-            <Gauge
-              color="#10b981"
-              size={24}
-            />
-          }
-          detail="Your average score"
-        />
-
-        <DashboardCard
-          title="High Risk"
-          value={highRiskCount}
-          icon={
-            <ShieldAlert
-              color="#ef4444"
-              size={24}
-            />
-          }
-          detail="Queries requiring attention"
-        />
-      </div>
-
-      <div
-        className="card"
-        style={{ padding: "20px" }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent:
-              "space-between",
-            alignItems: "center",
-            marginBottom: "16px",
-            gap: "10px",
-          }}
-        >
-          <h3
-            style={{
-              margin: 0,
-              fontSize: "16px",
-            }}
-          >
-            Query Workload History
-          </h3>
-
-          <input
-            type="text"
-            placeholder="Search queries..."
-            value={searchTerm}
-            onChange={(event) =>
-              setSearchTerm(
-                event.target.value
-              )
-            }
-            style={{
-              background: "#0f172a",
-              border: "1px solid #334155",
-              borderRadius: "4px",
-              padding: "7px 10px",
-              fontSize: "12px",
-              color: "#f8fafc",
-            }}
-          />
-        </div>
-
-        <div
-          style={{
-            overflowX: "auto",
-          }}
-        >
-          <table
-            style={{
-              width: "100%",
-              borderCollapse:
-                "collapse",
-              fontSize: "13px",
-              textAlign: "left",
-            }}
-          >
-            <thead>
-              <tr
-                style={{
-                  borderBottom:
-                    "1px solid #334155",
-                  color: "#94a3b8",
-                }}
-              >
-                <th
-                  style={{
-                    padding: "8px 10px",
-                  }}
-                >
-                  SQL
-                </th>
-
-                <th
-                  style={{
-                    padding: "8px 10px",
-                  }}
-                >
-                  Score
-                </th>
-
-                <th
-                  style={{
-                    padding: "8px 10px",
-                  }}
-                >
-                  Risk
-                </th>
-
-                <th
-                  style={{
-                    padding: "8px 10px",
-                  }}
-                >
-                  Action
-                </th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {filteredReports
-                .slice(0, 20)
-                .map((item, index) => (
-                  <tr
-                    key={
-                      item._id ||
-                      item.createdAt ||
-                      index
-                    }
-                    style={{
-                      borderBottom:
-                        "1px solid #1e293b",
-                    }}
-                  >
-                    <td
-                      style={{
-                        padding: "10px",
-                        fontFamily:
-                          "monospace",
-                        color: "#38bdf8",
-                        maxWidth: "350px",
-                        overflow: "hidden",
-                        textOverflow:
-                          "ellipsis",
-                        whiteSpace:
-                          "nowrap",
-                      }}
-                    >
-                      {item.sql}
-                    </td>
-
-                    <td
-                      style={{
-                        padding: "10px",
-                        fontWeight:
-                          "bold",
-                      }}
-                    >
-                      {item.analysis
-                        ?.performanceScore ||
-                        0}
-                    </td>
-
-                    <td
-                      style={{
-                        padding: "10px",
-                      }}
-                    >
-                      <span
-                        className={
-                          "pill " +
-                          getRiskClass(
-                            item.analysis
-                              ?.riskLevel
-                          )
-                        }
-                      >
-                        {item.analysis
-                          ?.riskLevel ||
-                          "Low"}
-                      </span>
-                    </td>
-
-                    <td
-                      style={{
-                        padding: "10px",
-                      }}
-                    >
-                      <button
-                        onClick={() =>
-                          onSelectQuery(
-                            item.sql
-                          )
-                        }
-                      >
-                        Load
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </main>
-  );
-}
-
-/* =========================================================
-   ADMIN LAYOUT
-========================================================= */
-
-function AdminLayout({
-  currentUser,
-  activeTab,
-  setActiveTab,
-  onLogout,
-  adminStats,
-  adminUsers,
-  adminReports,
-  selectedAdminUser,
-  setSelectedAdminUser,
-  loadAdminData,
-  loadAdminUserReports,
-  getAdminUserStats,
-  adminLoading,
-}) {
-  return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "#0f172a",
-        color: "#f8fafc",
-        display: "flex",
-        fontFamily:
-          "system-ui, -apple-system, sans-serif",
-      }}
-    >
-      {/* ADMIN SIDEBAR */}
-
-      <aside
-        style={{
-          width: "245px",
-          background: "#111827",
-          borderRight:
-            "1px solid #1e293b",
-          padding: "22px 14px",
-          boxSizing: "border-box",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            padding: "8px",
-            marginBottom: "28px",
-          }}
-        >
-          <div
-            style={{
-              width: "36px",
-              height: "36px",
-              borderRadius: "9px",
-              background: "#059669",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <ShieldCheck size={21} />
-          </div>
-
-          <div>
-            <b>QueryPilot</b>
-
-            <div
-              style={{
-                fontSize: "10px",
-                color: "#64748b",
-              }}
-            >
-              Admin Console
-            </div>
-          </div>
-        </div>
-
-        <SidebarButton
-          active={activeTab === "admin-dashboard"}
-          icon={<BarChart3 size={17} />}
-          label="Admin Dashboard"
-          onClick={() =>
-            setActiveTab("admin-dashboard")
-          }
-        />
-
-        <SidebarButton
-          active={activeTab === "admin-users"}
-          icon={<Users size={17} />}
-          label="All Users"
-          onClick={() =>
-            setActiveTab("admin-users")
-          }
-        />
-
-        <SidebarButton
-          active={activeTab === "admin-reports"}
-          icon={<FileText size={17} />}
-          label="All Reports"
-          onClick={() =>
-            setActiveTab("admin-reports")
-          }
-        />
-
-        <div
-          style={{
-            marginTop: "auto",
-            borderTop:
-              "1px solid #1e293b",
-            paddingTop: "15px",
-          }}
-        >
-          <div
-            style={{
-              padding: "10px",
-              background: "#0f172a",
-              borderRadius: "7px",
-              marginBottom: "10px",
-            }}
-          >
-            <div
-              style={{
-                fontSize: "11px",
-                color: "#34d399",
-              }}
-            >
-              ADMIN
-            </div>
-
-            <div
-              style={{
-                fontSize: "12px",
-                color: "#cbd5e1",
-                marginTop: "3px",
-                wordBreak:
-                  "break-all",
-              }}
-            >
-              {currentUser.email}
-            </div>
-          </div>
-
-          <button
-            onClick={onLogout}
-            style={{
-              width: "100%",
-              padding: "9px",
-              display: "flex",
-              justifyContent:
-                "center",
-              alignItems: "center",
-              gap: "7px",
-              background: "#1e293b",
-              border:
-                "1px solid #334155",
-              color: "#f87171",
-              borderRadius: "6px",
-              cursor: "pointer",
-            }}
-          >
-            <LogOut size={15} />
-            Logout
-          </button>
-        </div>
-      </aside>
-
-      {/* ADMIN MAIN */}
-
-      <main
-        style={{
-          flex: 1,
-          minWidth: 0,
-          padding: "28px 36px",
-          overflowY: "auto",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent:
-              "space-between",
-            alignItems: "center",
-            marginBottom: "25px",
-          }}
-        >
-          <div>
-            <h1
-              style={{
-                margin: "0 0 5px",
-                fontSize: "24px",
-              }}
-            >
-              {activeTab ===
-              "admin-users"
-                ? "User Management"
-                : activeTab ===
-                  "admin-reports"
-                ? "Report Monitoring"
-                : "Admin Dashboard"}
-            </h1>
-
-            <p
-              style={{
-                margin: 0,
-                color: "#64748b",
-                fontSize: "13px",
-              }}
-            >
-              Monitor users, SQL analysis
-              and generated reports
-            </p>
-          </div>
-
-          <button
-            onClick={loadAdminData}
-            disabled={adminLoading}
-          >
-            <RefreshCw
-              size={15}
-              className={
-                adminLoading
-                  ? "animate-spin"
-                  : ""
-              }
-            />
-
-            {adminLoading
-              ? "Loading..."
-              : "Refresh"}
-          </button>
-        </div>
-
-        {activeTab ===
-          "admin-dashboard" && (
-          <AdminDashboard
-            stats={adminStats}
-            users={adminUsers}
-            reports={adminReports}
-            onSelectUser={(email) => {
-              setSelectedAdminUser(
-                email
-              );
-              loadAdminUserReports(
-                email
-              );
-              setActiveTab(
-                "admin-reports"
-              );
-            }}
-          />
-        )}
-
-        {activeTab === "admin-users" && (
-          <AdminUsers
-            users={adminUsers}
-            reports={adminReports}
-            onSelectUser={(email) => {
-              setSelectedAdminUser(
-                email
-              );
-
-              loadAdminUserReports(
-                email
-              );
-
-              setActiveTab(
-                "admin-reports"
-              );
-            }}
-          />
-        )}
-
-        {activeTab ===
-          "admin-reports" && (
-          <AdminReports
-            reports={adminReports}
-            users={adminUsers}
-            selectedUser={
-              selectedAdminUser
-            }
-            onSelectUser={(email) => {
-              setSelectedAdminUser(
-                email
-              );
-
-              loadAdminUserReports(
-                email
-              );
-            }}
-            onShowAll={() => {
-              setSelectedAdminUser("");
-              loadAdminData();
-            }}
-          />
-        )}
-      </main>
-    </div>
-  );
-}
-
-/* =========================================================
-   ADMIN DASHBOARD
-========================================================= */
-
-function AdminDashboard({
-  stats,
-  users,
-  reports,
-  onSelectUser,
-}) {
-  return (
-    <>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns:
-            "repeat(auto-fit,minmax(200px,1fr))",
-          gap: "16px",
-          marginBottom: "24px",
-        }}
-      >
-        <AdminStatCard
-          title="Total Users"
-          value={stats.totalUsers || 0}
-          icon={<Users />}
-        />
-
-        <AdminStatCard
-          title="Total Reports"
-          value={stats.totalReports || 0}
-          icon={<FileText />}
-        />
-
-        <AdminStatCard
-          title="Average Score"
-          value={`${stats.averageScore || 0}/100`}
-          icon={<Gauge />}
-        />
-
-        <AdminStatCard
-          title="High Risk"
-          value={stats.highRisk || 0}
-          icon={<ShieldAlert />}
-        />
-
-        <AdminStatCard
-          title="Medium Risk"
-          value={stats.mediumRisk || 0}
-          icon={<TriangleAlert />}
-        />
-
-        <AdminStatCard
-          title="Low Risk"
-          value={stats.lowRisk || 0}
-          icon={<ShieldCheck />}
-        />
-      </div>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns:
-            "repeat(auto-fit,minmax(350px,1fr))",
-          gap: "16px",
-        }}
-      >
-        <div
-          className="card"
-          style={{ padding: "20px" }}
-        >
-          <div className="head">
-            <div>
-              <h2>Registered Users</h2>
-              <small>
-                Users registered in the
-                application
-              </small>
-            </div>
-          </div>
-
-          {users.length === 0 ? (
-            <div className="empty">
-              No users found.
-            </div>
-          ) : (
-            users.slice(0, 10).map((user) => (
-              <div
-                key={user._id}
-                style={{
-                  padding: "12px 0",
-                  borderBottom:
-                    "1px solid #1e293b",
-                  display: "flex",
-                  justifyContent:
-                    "space-between",
-                  alignItems: "center",
-                  gap: "10px",
-                }}
-              >
-                <div>
-                  <b>{user.email}</b>
-
-                  <div
-                    style={{
-                      color: "#64748b",
-                      fontSize: "11px",
-                      marginTop: "3px",
-                    }}
-                  >
-                    Created{" "}
-                    {user.createdAt
-                      ? new Date(
-                          user.createdAt
-                        ).toLocaleDateString()
-                      : "N/A"}
-                  </div>
-                </div>
-
-                <button
-                  onClick={() =>
-                    onSelectUser(
-                      user.email
-                    )
-                  }
-                >
-                  View
-                </button>
-              </div>
-            ))
-          )}
-        </div>
-
-        <div
-          className="card"
-          style={{ padding: "20px" }}
-        >
-          <div className="head">
-            <div>
-              <h2>Recent Reports</h2>
-              <small>
-                Latest user SQL analysis
-              </small>
-            </div>
-          </div>
-
-          {reports.length === 0 ? (
-            <div className="empty">
-              No reports found.
-            </div>
-          ) : (
-            reports
-              .slice(0, 10)
-              .map((report, index) => (
-                <div
-                  key={
-                    report._id ||
-                    index
-                  }
-                  style={{
-                    padding: "12px 0",
-                    borderBottom:
-                      "1px solid #1e293b",
-                  }}
-                >
-                  <b>
-                    {report.userEmail}
-                  </b>
-
-                  <div
-                    style={{
-                      fontSize: "12px",
-                      color: "#38bdf8",
-                      marginTop: "4px",
-                      fontFamily:
-                        "monospace",
-                      overflow: "hidden",
-                      textOverflow:
-                        "ellipsis",
-                      whiteSpace:
-                        "nowrap",
-                    }}
-                  >
-                    {report.sql}
-                  </div>
-
-                  <div
-                    style={{
-                      color: "#64748b",
-                      fontSize: "11px",
-                      marginTop: "4px",
-                    }}
-                  >
-                    Score:{" "}
-                    {report.analysis
-                      ?.performanceScore ||
-                      0}
-                    /100
-                  </div>
-                </div>
-              ))
-          )}
-        </div>
-      </div>
-    </>
-  );
-}
-
-/* =========================================================
-   ADMIN USERS
-========================================================= */
-
-function AdminUsers({
-  users,
-  reports,
-  onSelectUser,
-}) {
-  const [search, setSearch] =
-    useState("");
-
-  const filteredUsers =
-    users.filter((user) =>
-      user.email
-        ?.toLowerCase()
-        .includes(
-          search.toLowerCase()
-        )
-    );
-
-  return (
-    <div
-      className="card"
-      style={{ padding: "20px" }}
-    >
-      <div className="head">
-        <div>
-          <h2>All Users</h2>
-          <small>
-            Monitor registered user
-            accounts
-          </small>
-        </div>
-
-        <input
-          placeholder="Search user email..."
-          value={search}
-          onChange={(event) =>
-            setSearch(
-              event.target.value
-            )
-          }
-          style={{
-            background: "#0f172a",
-            border:
-              "1px solid #334155",
-            color: "#fff",
-            padding: "8px 10px",
-            borderRadius: "6px",
-          }}
-        />
-      </div>
-
-      <div
-        style={{
-          overflowX: "auto",
-        }}
-      >
-        <table
-          style={{
-            width: "100%",
-            borderCollapse:
-              "collapse",
-          }}
-        >
-          <thead>
-            <tr
-              style={{
-                borderBottom:
-                  "1px solid #334155",
-                textAlign: "left",
-                color: "#94a3b8",
-              }}
-            >
-              <th
-                style={{
-                  padding: "12px",
-                }}
-              >
-                Email
-              </th>
-
-              <th
-                style={{
-                  padding: "12px",
-                }}
-              >
-                Role
-              </th>
-
-              <th
-                style={{
-                  padding: "12px",
-                }}
-              >
-                Created
-              </th>
-
-              <th
-                style={{
-                  padding: "12px",
-                }}
-              >
-                Reports
-              </th>
-
-              <th
-                style={{
-                  padding: "12px",
-                }}
-              >
-                Action
-              </th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {filteredUsers.map(
-              (user) => {
-                const reportCount =
-                  reports.filter(
-                    (report) =>
-                      report.userEmail ===
-                      user.email
-                  ).length;
-
-                return (
-                  <tr
-                    key={user._id}
-                    style={{
-                      borderBottom:
-                        "1px solid #1e293b",
-                    }}
-                  >
-                    <td
-                      style={{
-                        padding: "12px",
-                      }}
-                    >
-                      {user.email}
-                    </td>
-
-                    <td
-                      style={{
-                        padding: "12px",
-                      }}
-                    >
-                      <span
-                        style={{
-                          color:
-                            "#38bdf8",
-                        }}
-                      >
-                        User
-                      </span>
-                    </td>
-
-                    <td
-                      style={{
-                        padding: "12px",
-                        color:
-                          "#94a3b8",
-                      }}
-                    >
-                      {user.createdAt
-                        ? new Date(
-                            user.createdAt
-                          ).toLocaleString()
-                        : "N/A"}
-                    </td>
-
-                    <td
-                      style={{
-                        padding: "12px",
-                      }}
-                    >
-                      {reportCount}
-                    </td>
-
-                    <td
-                      style={{
-                        padding: "12px",
-                      }}
-                    >
-                      <button
-                        onClick={() =>
-                          onSelectUser(
-                            user.email
-                          )
-                        }
-                      >
-                        View Reports
-                      </button>
-                    </td>
-                  </tr>
-                );
-              }
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-/* =========================================================
-   ADMIN REPORTS
-========================================================= */
-
-function AdminReports({
-  reports,
-  users,
-  selectedUser,
-  onSelectUser,
-  onShowAll,
-}) {
-  const [search, setSearch] =
-    useState("");
-
-  const filteredReports =
-    reports.filter((report) => {
-      const text = `
-        ${report.userEmail || ""}
-        ${report.sql || ""}
-        ${report.title || ""}
-        ${report.analysis?.riskLevel || ""}
-      `.toLowerCase();
-
-      return text.includes(
-        search.toLowerCase()
-      );
-    });
-
-  return (
-    <>
-      <div
-        className="card"
-        style={{
-          padding: "20px",
-          marginBottom: "16px",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "12px",
-            flexWrap: "wrap",
-          }}
-        >
-          <select
-            value={selectedUser}
-            onChange={(event) =>
-              onSelectUser(
-                event.target.value
-              )
-            }
-            style={{
-              background: "#0f172a",
-              color: "#fff",
-              border:
-                "1px solid #334155",
-              padding: "9px 12px",
-              borderRadius: "6px",
-            }}
-          >
-            <option value="">
-              Select User
-            </option>
-
-            {users.map((user) => (
-              <option
-                key={user._id}
-                value={user.email}
-              >
-                {user.email}
-              </option>
-            ))}
-          </select>
-
-          <button onClick={onShowAll}>
-            Show All Users
-          </button>
-
-          <input
-            placeholder="Search reports..."
-            value={search}
-            onChange={(event) =>
-              setSearch(
-                event.target.value
-              )
-            }
-            style={{
-              flex: 1,
-              minWidth: "220px",
-              background:
-                "#0f172a",
-              color: "#fff",
-              border:
-                "1px solid #334155",
-              padding: "9px 12px",
-              borderRadius: "6px",
-            }}
-          />
-        </div>
-      </div>
-
-      <div
-        className="card"
-        style={{ padding: "20px" }}
-      >
-        <div className="head">
-          <div>
-            <h2>
-              {selectedUser
-                ? `Reports: ${selectedUser}`
-                : "All User Reports"}
-            </h2>
-
-            <small>
-              Administrator monitoring
-              view
-            </small>
-          </div>
-
-          <span
-            style={{
-              color: "#38bdf8",
-              fontSize: "12px",
-            }}
-          >
-            {filteredReports.length} reports
-          </span>
-        </div>
-
-        {filteredReports.length ===
-        0 ? (
-          <div className="empty">
-            No reports found.
-          </div>
-        ) : (
-          <div
-            style={{
-              overflowX: "auto",
-            }}
-          >
-            <table
-              style={{
-                width: "100%",
-                borderCollapse:
-                  "collapse",
-                fontSize: "13px",
-              }}
-            >
-              <thead>
-                <tr
-                  style={{
-                    borderBottom:
-                      "1px solid #334155",
-                    textAlign:
-                      "left",
-                    color:
-                      "#94a3b8",
-                  }}
-                >
-                  <th
-                    style={{
-                      padding: "10px",
-                    }}
-                  >
-                    User
-                  </th>
-
-                  <th
-                    style={{
-                      padding: "10px",
-                    }}
-                  >
-                    SQL Query
-                  </th>
-
-                  <th
-                    style={{
-                      padding: "10px",
-                    }}
-                  >
-                    Score
-                  </th>
-
-                  <th
-                    style={{
-                      padding: "10px",
-                    }}
-                  >
-                    Risk
-                  </th>
-
-                  <th
-                    style={{
-                      padding: "10px",
-                    }}
-                  >
-                    Date
-                  </th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {filteredReports.map(
-                  (report, index) => (
-                    <tr
-                      key={
-                        report._id ||
-                        index
-                      }
-                      style={{
-                        borderBottom:
-                          "1px solid #1e293b",
-                      }}
-                    >
-                      <td
-                        style={{
-                          padding: "10px",
-                          color:
-                            "#cbd5e1",
-                        }}
-                      >
-                        {report.userEmail}
-                      </td>
-
-                      <td
-                        style={{
-                          padding: "10px",
-                          maxWidth:
-                            "400px",
-                          fontFamily:
-                            "monospace",
-                          color:
-                            "#38bdf8",
-                          overflow:
-                            "hidden",
-                          textOverflow:
-                            "ellipsis",
-                          whiteSpace:
-                            "nowrap",
-                        }}
-                      >
-                        {report.sql}
-                      </td>
-
-                      <td
-                        style={{
-                          padding: "10px",
-                          fontWeight:
-                            "bold",
-                        }}
-                      >
-                        {report.analysis
-                          ?.performanceScore ||
-                          0}
-                        /100
-                      </td>
-
-                      <td
-                        style={{
-                          padding: "10px",
-                        }}
-                      >
-                        <span
-                          className={
-                            "pill " +
-                            getRiskClass(
-                              report
-                                .analysis
-                                ?.riskLevel
-                            )
-                          }
-                        >
-                          {report.analysis
-                            ?.riskLevel ||
-                            "Low"}
-                        </span>
-                      </td>
-
-                      <td
-                        style={{
-                          padding: "10px",
-                          color:
-                            "#94a3b8",
-                        }}
-                      >
-                        {report.createdAt
-                          ? new Date(
-                              report.createdAt
-                            ).toLocaleString()
-                          : "N/A"}
-                      </td>
-                    </tr>
-                  )
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </>
-  );
-}
-
-/* =========================================================
-   ADMIN STAT CARD
-========================================================= */
-
-function AdminStatCard({
-  title,
-  value,
-  icon,
-}) {
-  return (
-    <div
-      className="card"
-      style={{
-        padding: "20px",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          justifyContent:
-            "space-between",
-          alignItems: "center",
-        }}
-      >
-        <span
-          style={{
-            color: "#94a3b8",
-            fontSize: "12px",
-          }}
-        >
-          {title}
-        </span>
-
-        <div
-          style={{
-            color: "#38bdf8",
-          }}
-        >
-          {icon}
-        </div>
-      </div>
-
-      <div
-        style={{
-          fontSize: "27px",
-          fontWeight: "800",
-          marginTop: "12px",
-        }}
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
-
-/* =========================================================
-   DASHBOARD CARD
-========================================================= */
-
-function DashboardCard({
-  title,
-  value,
-  icon,
-  detail,
-}) {
-  return (
-    <div
-      className="card"
-      style={{
-        padding: "20px",
-        display: "flex",
-        flexDirection: "column",
-        gap: "8px",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          justifyContent:
-            "space-between",
-          alignItems: "center",
-        }}
-      >
-        <span
-          style={{
-            fontSize: "13px",
-            color: "#94a3b8",
-          }}
-        >
-          {title}
-        </span>
-
-        {icon}
-      </div>
-
-      <div
-        style={{
-          fontSize: "24px",
-          fontWeight: "bold",
-        }}
-      >
-        {value}
-      </div>
-
-      <small
-        style={{
-          color: "#64748b",
-          fontSize: "11px",
-        }}
-      >
-        {detail}
-      </small>
-    </div>
-  );
-}
-
-/* =========================================================
-   METRIC
-========================================================= */
-
 function Metric({ n, v }) {
   return (
-    <div
-      style={{
-        background: "#0f172a",
-        border:
-          "1px solid #1e293b",
-        padding: "10px",
-        borderRadius: "6px",
-      }}
-    >
-      <small
-        style={{
-          display: "block",
-          color: "#64748b",
-          fontSize: "10px",
-        }}
-      >
-        {n}
-      </small>
-
-      <b
-        style={{
-          display: "block",
-          marginTop: "3px",
-        }}
-      >
-        {v}
-      </b>
+    <div>
+      <small>{n}</small>
+      <b>{v}</b>
     </div>
   );
 }
 
-/* =========================================================
-   PANEL
-========================================================= */
-
-function Panel({
-  title,
-  icon,
-  children,
-}) {
+function Panel({ title, icon, children }) {
   return (
     <div className="card">
       <div className="head">
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-          }}
-        >
+        <div className="titleIcon">
           {icon}
-
           <div>
             <h2>{title}</h2>
-
-            <small>
-              Detected by analysis engine
-            </small>
+            <small>Detected by analysis engine</small>
           </div>
         </div>
       </div>
-
       {children}
     </div>
   );
