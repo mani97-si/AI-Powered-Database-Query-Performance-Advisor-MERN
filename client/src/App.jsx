@@ -2,25 +2,18 @@ import React, { useEffect, useState } from "react";
 import jsPDF from "jspdf";
 import {
   Activity,
-  ArrowRight,
   BarChart3,
-  CheckCircle2,
   CheckCheck,
-  ChevronRight,
   Copy,
   Database,
   Download,
   Gauge,
   Layers,
-  Lock,
   LogOut,
-  Mail,
   RefreshCw,
-  Search,
   ShieldAlert,
   ShieldCheck,
   Terminal,
-  TrendingDown,
   TriangleAlert,
   Wand2,
   Zap,
@@ -28,7 +21,8 @@ import {
 
 const API = "https://ai-powered-database-query-performance.onrender.com/api";
 
-// TOP-LEVEL SCOPED HELPERS (Prevents ReferenceError on any device)
+// ---------------- HELPERS ---------------- //
+
 const getDisplayName = (val) => {
   if (!val) return "User";
   if (typeof val === "string") {
@@ -45,6 +39,26 @@ const getDisplayName = (val) => {
 const getStorageKey = (prefix, currentUser) => {
   const user = getDisplayName(currentUser);
   return `${prefix}_${String(user).toLowerCase().replace(/[^a-z0-9]/g, "_")}`;
+};
+
+const getToken = () => {
+  try {
+    return localStorage.getItem("advisor_token") || "";
+  } catch {
+    return "";
+  }
+};
+
+// fetch wrapper that ALWAYS attaches the JWT to backend requests
+const authFetch = (url, options = {}) => {
+  const token = getToken();
+  return fetch(url, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
 };
 
 const SAMPLE_DEFAULT = `SELECT *
@@ -84,10 +98,13 @@ WHERE id IN (
 )
 ORDER BY created_at DESC;`;
 
+// ---------------- APP ---------------- //
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState(() => {
     try {
-      return localStorage.getItem("advisor_user") || null;
+      // only treat as logged in if a token also exists
+      return localStorage.getItem("advisor_token") ? localStorage.getItem("advisor_user") || null : null;
     } catch {
       return null;
     }
@@ -152,9 +169,14 @@ export default function App() {
     try {
       setRefreshing(true);
       const [resReports, resStats] = await Promise.all([
-        fetch(`${API}/reports?userEmail=${userParam}`),
-        fetch(`${API}/stats?userEmail=${userParam}`),
+        authFetch(`${API}/reports?userEmail=${userParam}`),
+        authFetch(`${API}/stats?userEmail=${userParam}`),
       ]);
+
+      if (resReports.status === 401 || resStats.status === 401) {
+        handleLogout();
+        return;
+      }
 
       const dataReports = await resReports.json();
       const dataStats = await resStats.json();
@@ -193,7 +215,7 @@ export default function App() {
     setLoading(true);
     setCopied(false);
     try {
-      const r = await fetch(`${API}/analyze`, {
+      const r = await authFetch(`${API}/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -202,6 +224,12 @@ export default function App() {
           userEmail: getDisplayName(currentUser),
         }),
       });
+
+      if (r.status === 401) {
+        alert("Your session is invalid or expired. Please sign in again.");
+        handleLogout();
+        return;
+      }
 
       const d = await r.json();
       if (d.ok) {
@@ -232,6 +260,7 @@ export default function App() {
       checkHealth();
       loadReportsAndStats();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser]);
 
   const copyToClipboard = (text) => {
@@ -249,15 +278,29 @@ export default function App() {
     const pageWidth = doc.internal.pageSize.getWidth();
     const margin = 14;
     const contentWidth = pageWidth - margin * 2;
-    let y = 35; // Start below the branding banner
+    let y = 35;
+
+    const drawBanner = () => {
+      doc.setFillColor(37, 99, 235);
+      doc.rect(0, 0, pageWidth, 24, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(15);
+      doc.setTextColor(255, 255, 255);
+      doc.text("QueryPilot", margin, 12);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.text("SQL Optimization Report", margin, 18);
+    };
 
     const checkPageBreak = (neededHeight) => {
       if (y + neededHeight > 275) {
         doc.addPage();
-        y = 35; // Start below the branding banner on subsequent pages
+        drawBanner();
+        y = 35;
       }
     };
-  y = 35;
+
+    drawBanner();
 
     doc.setFillColor(248, 250, 252);
     doc.setDrawColor(226, 232, 240);
@@ -288,6 +331,7 @@ export default function App() {
     const sqlLines = doc.splitTextToSize(report.sql, contentWidth);
     doc.text(sqlLines, margin, y);
     y += sqlLines.length * 3.8 + 6;
+
     if (a.correctedQuery) {
       checkPageBreak(25);
       doc.setFont("helvetica", "bold");
@@ -632,11 +676,7 @@ export default function App() {
                   </div>
                   <button onClick={() => setSql(SAMPLE_DEFAULT)}>Load Default Sample</button>
                 </div>
-                <textarea
-                  value={sql}
-                  onChange={(e) => setSql(e.target.value)}
-                  rows={8}
-                />
+                <textarea value={sql} onChange={(e) => setSql(e.target.value)} rows={8} />
                 <div className="actions">
                   <button className="primary" onClick={analyze} disabled={loading}>
                     {loading ? "Analyzing..." : "Analyze Query →"}
@@ -819,8 +859,7 @@ export default function App() {
                   <div className="historyRow" key={i}>
                     <b>{r.title}</b>
                     <span>
-                      {new Date(r.createdAt).toLocaleString()} • Score{" "}
-                      {r.analysis?.performanceScore || 0}/100
+                      {new Date(r.createdAt).toLocaleString()} • Score {r.analysis?.performanceScore || 0}/100
                     </span>
                   </div>
                 ))
@@ -955,8 +994,6 @@ function WelcomeScreen({ onGetStarted, onRegister }) {
 
 function DashboardView({ stats, reports, refreshing, onRefresh, onSelectQuery }) {
   const [searchTerm, setSearchTerm] = useState("");
-  const lowRiskCount = reports.filter((r) => r.analysis?.riskLevel === "Low").length;
-  const mediumRiskCount = reports.filter((r) => r.analysis?.riskLevel === "Medium").length;
   const highRiskCount = stats.highRisk || reports.filter((r) => r.analysis?.riskLevel === "High").length;
 
   const filteredReports = reports.filter((r) =>
@@ -1027,7 +1064,17 @@ function DashboardView({ stats, reports, refreshing, onRefresh, onSelectQuery })
             <tbody>
               {filteredReports.slice(0, 10).map((r, i) => (
                 <tr key={i} style={{ borderBottom: "1px solid #1e293b" }}>
-                  <td style={{ padding: "10px", fontFamily: "monospace", color: "#38bdf8", maxWidth: "230px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <td
+                    style={{
+                      padding: "10px",
+                      fontFamily: "monospace",
+                      color: "#38bdf8",
+                      maxWidth: "230px",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
                     {r.sql}
                   </td>
                   <td style={{ padding: "10px", fontWeight: "bold" }}>{r.analysis?.performanceScore || 0}</td>
@@ -1076,13 +1123,21 @@ function DashboardCard({ title, value, icon, detail }) {
 }
 
 // ---------------- AUTHENTICATION SCREEN ---------------- //
+// Talks to the backend to obtain a REAL token.
+// Assumed routes: POST {API}/auth/login and POST {API}/auth/register
+// Assumed response: { ok: true, token: "...", user?: { email } }
+// Change AUTH_PATHS below if your Express routes are named differently.
+
+const AUTH_PATHS = { login: "/auth/login", register: "/auth/register" };
 
 function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) {
+  const [mode, setMode] = useState(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     const loginId = email.trim();
     if (!loginId || !password.trim()) {
@@ -1090,12 +1145,52 @@ function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) 
       return;
     }
 
+    setError("");
+    setSubmitting(true);
     try {
-      localStorage.setItem("advisor_token", "demo-token");
-      localStorage.setItem("advisor_user", loginId);
-    } catch (err) {}
+      const res = await fetch(`${API}${AUTH_PATHS[mode]}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // send several common field names so it matches most backends
+        body: JSON.stringify({
+          email: loginId,
+          username: loginId,
+          password,
+        }),
+      });
 
-    onLoginSuccess(loginId);
+      let data = {};
+      try {
+        data = await res.json();
+      } catch {}
+
+      if (!res.ok || data.ok === false || !data.token) {
+        setError(data.error || data.message || `${mode === "login" ? "Login" : "Registration"} failed (${res.status}).`);
+        return;
+      }
+
+      const userId = data.user?.email || data.user?.username || data.email || loginId;
+      try {
+        localStorage.setItem("advisor_token", data.token);
+        localStorage.setItem("advisor_user", userId);
+      } catch (err) {}
+
+      onLoginSuccess(userId);
+    } catch (err) {
+      setError("Backend not reachable. It may be waking up on Render, try again in a few seconds.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const inputStyle = {
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: "6px",
+    background: "#0f172a",
+    border: "1px solid #475569",
+    color: "#ffffff",
+    boxSizing: "border-box",
   };
 
   return (
@@ -1125,12 +1220,17 @@ function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) 
             <Zap size={22} color="#3b82f6" />
             <h2 style={{ margin: 0, fontSize: "20px" }}>QueryPilot</h2>
           </div>
-          <button onClick={onBackToWelcome} style={{ background: "transparent", border: "none", color: "#64748b", fontSize: "12px", cursor: "pointer" }}>
+          <button
+            onClick={onBackToWelcome}
+            style={{ background: "transparent", border: "none", color: "#64748b", fontSize: "12px", cursor: "pointer" }}
+          >
             ← Back
           </button>
         </div>
 
-        <h3 style={{ margin: "0 0 16px 0", fontSize: "16px" }}>Sign in to your account</h3>
+        <h3 style={{ margin: "0 0 16px 0", fontSize: "16px" }}>
+          {mode === "login" ? "Sign in to your account" : "Create your account"}
+        </h3>
 
         {error && (
           <div style={{ background: "#450a0a", color: "#f87171", padding: "10px", borderRadius: "6px", fontSize: "13px", marginBottom: "14px" }}>
@@ -1149,15 +1249,7 @@ function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) 
               placeholder="e.g. user@company.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                borderRadius: "6px",
-                background: "#0f172a",
-                border: "1px solid #475569",
-                color: "#ffffff",
-                boxSizing: "border-box",
-              }}
+              style={inputStyle}
             />
           </div>
 
@@ -1171,20 +1263,13 @@ function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) 
               placeholder="••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "10px 12px",
-                borderRadius: "6px",
-                background: "#0f172a",
-                border: "1px solid #475569",
-                color: "#ffffff",
-                boxSizing: "border-box",
-              }}
+              style={inputStyle}
             />
           </div>
 
           <button
             type="submit"
+            disabled={submitting}
             style={{
               marginTop: "8px",
               padding: "11px",
@@ -1193,12 +1278,27 @@ function AuthScreen({ initialMode = "login", onLoginSuccess, onBackToWelcome }) 
               border: "none",
               borderRadius: "6px",
               fontWeight: "600",
-              cursor: "pointer",
+              cursor: submitting ? "wait" : "pointer",
+              opacity: submitting ? 0.7 : 1,
             }}
           >
-            Sign In →
+            {submitting ? "Please wait..." : mode === "login" ? "Sign In →" : "Create Account →"}
           </button>
         </form>
+
+        <div style={{ marginTop: "16px", textAlign: "center", fontSize: "12px", color: "#94a3b8" }}>
+          {mode === "login" ? "New here? " : "Already have an account? "}
+          <button
+            type="button"
+            onClick={() => {
+              setMode(mode === "login" ? "register" : "login");
+              setError("");
+            }}
+            style={{ background: "transparent", border: "none", color: "#38bdf8", cursor: "pointer", fontSize: "12px" }}
+          >
+            {mode === "login" ? "Create an account" : "Sign in"}
+          </button>
+        </div>
       </div>
     </div>
   );

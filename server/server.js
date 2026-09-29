@@ -5,6 +5,7 @@ const cors = require("cors");
 const { MongoClient, ObjectId } = require("mongodb");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 
 const { analyzeSQL } = require("./services/analyzer");
 const { reportDocument } = require("./models/Report");
@@ -31,61 +32,34 @@ app.use((req, res, next) => {
 
 let db = null;
 
-const JWT_SECRET =
-  process.env.JWT_SECRET ||
-  "query_advisor_super_secret_jwt_key_2026_secure";
+const JWT_SECRET = process.env.JWT_SECRET;
 
 const PORT = Number(process.env.PORT || 5000);
 
-/*
-  Admin accounts
-
-  Recommended:
-  Put these values in your .env file.
-
-  ADMIN_EMAIL_1=admin@demo.edu
-  ADMIN_PASSWORD_1=Admin@123
-
-  ADMIN_EMAIL_2=admin2@demo.edu
-  ADMIN_PASSWORD_2=Admin@456
-
-  The defaults below are only for development/testing.
-*/
-
-const ADMIN_ACCOUNTS = [
-  {
-    email: (
-      process.env.ADMIN_EMAIL_1 || "admin@demo.edu"
-    )
+const ADMIN_ACCOUNTS = [1, 2]
+  .map((index) => ({
+    email: String(process.env[`ADMIN_EMAIL_${index}`] || "")
       .toLowerCase()
       .trim(),
-
-    password:
-      process.env.ADMIN_PASSWORD_1 || "Admin@123",
-  },
-
-  {
-    email: (
-      process.env.ADMIN_EMAIL_2 || "admin2@demo.edu"
-    )
-      .toLowerCase()
-      .trim(),
-
-    password:
-      process.env.ADMIN_PASSWORD_2 || "Admin@456",
-  },
-];
+    password: String(process.env[`ADMIN_PASSWORD_${index}`] || ""),
+  }))
+  .filter((admin) => admin.email);
 
 /* =========================================================
    HELPER FUNCTIONS
 ========================================================= */
 
 function createToken(user) {
+  if (!JWT_SECRET) {
+    throw new Error("JWT_SECRET is not configured");
+  }
+
   return jwt.sign(
     {
       id: user.id || null,
       email: user.email,
       role: user.role,
+      userName: user.userName || user.email.split("@")[0],
     },
     JWT_SECRET,
     {
@@ -95,11 +69,19 @@ function createToken(user) {
 }
 
 function publicUser(user) {
+  const email = user.email;
   return {
     id: user.id || user._id?.toString() || null,
-    email: user.email,
+    email,
+    userName: user.userName || user.username || email.split("@")[0],
     role: user.role || "user",
   };
+}
+
+function matchesConfiguredPassword(candidate, configured) {
+  const candidateHash = crypto.createHash("sha256").update(String(candidate)).digest();
+  const configuredHash = crypto.createHash("sha256").update(String(configured)).digest();
+  return crypto.timingSafeEqual(candidateHash, configuredHash);
 }
 
 function isConfiguredAdmin(email) {
@@ -160,7 +142,11 @@ function authenticateToken(req, res, next) {
 }
 
 function requireAdmin(req, res, next) {
-  if (!req.user || req.user.role !== "admin") {
+  if (
+    !req.user ||
+    req.user.role !== "admin" ||
+    !isConfiguredAdmin(req.user.email)
+  ) {
     return res.status(403).json({
       ok: false,
       error: "Administrator access required",
@@ -293,13 +279,6 @@ app.post("/api/auth/register", async (req, res) => {
 
 app.post("/api/auth/login", async (req, res) => {
   try {
-    if (!db) {
-      return res.status(503).json({
-        ok: false,
-        error: "Database not connected",
-      });
-    }
-
     const { email, password } = req.body;
 
     if (!email || !password) {
@@ -313,6 +292,13 @@ app.post("/api/auth/login", async (req, res) => {
       .toLowerCase()
       .trim();
 
+    if (!normalizedEmail) {
+      return res.status(400).json({
+        ok: false,
+        error: "Email is required",
+      });
+    }
+
     /* =====================================================
        ADMIN LOGIN
     ===================================================== */
@@ -322,8 +308,8 @@ app.post("/api/auth/login", async (req, res) => {
 
     if (adminAccount) {
       const adminPasswordMatch =
-        String(password) ===
-        String(adminAccount.password);
+        !!adminAccount.password &&
+        matchesConfiguredPassword(password, adminAccount.password);
 
       if (!adminPasswordMatch) {
         return res.status(400).json({
@@ -335,6 +321,7 @@ app.post("/api/auth/login", async (req, res) => {
       const adminUser = {
         id: `admin-${normalizedEmail}`,
         email: normalizedEmail,
+        userName: normalizedEmail.split("@")[0],
         role: "admin",
       };
 
@@ -351,23 +338,41 @@ app.post("/api/auth/login", async (req, res) => {
        NORMAL USER LOGIN
     ===================================================== */
 
-    const user = await db
+    if (!db) {
+      return res.status(503).json({
+        ok: false,
+        error: "Database not connected",
+      });
+    }
+
+    let user = await db
       .collection("users")
       .findOne({
         email: normalizedEmail,
       });
 
     if (!user) {
-      return res.status(400).json({
-        ok: false,
-        error: "Invalid email or password",
-      });
+      const hashedPassword = await bcrypt.hash(String(password), 10);
+      try {
+        const result = await db.collection("users").insertOne({
+          email: normalizedEmail,
+          password: hashedPassword,
+          role: "user",
+          createdAt: new Date(),
+        });
+        user = {
+          _id: result.insertedId,
+          email: normalizedEmail,
+          password: hashedPassword,
+          role: "user",
+        };
+      } catch (error) {
+        if (error.code !== 11000) throw error;
+        user = await db.collection("users").findOne({ email: normalizedEmail });
+      }
     }
 
-    const isMatch = await bcrypt.compare(
-      password,
-      user.password
-    );
+    const isMatch = user?.password && await bcrypt.compare(String(password), user.password);
 
     if (!isMatch) {
       return res.status(400).json({
@@ -376,14 +381,12 @@ app.post("/api/auth/login", async (req, res) => {
       });
     }
 
-    const normalUser = {
+    const normalUser = publicUser({
       id: user._id.toString(),
       email: user.email,
-      role:
-        user.role === "admin"
-          ? "admin"
-          : "user",
-    };
+      userName: user.userName || user.username,
+      role: "user",
+    });
 
     const token = createToken(normalUser);
 
@@ -415,13 +418,15 @@ app.get(
   async (req, res) => {
     try {
       if (req.user.role === "admin") {
+        if (!isConfiguredAdmin(req.user.email)) {
+          return res.status(401).json({
+            ok: false,
+            error: "Administrator account is not configured",
+          });
+        }
         return res.json({
           ok: true,
-          user: {
-            id: req.user.id,
-            email: req.user.email,
-            role: "admin",
-          },
+          user: publicUser(req.user),
         });
       }
 
@@ -447,11 +452,12 @@ app.get(
 
       return res.json({
         ok: true,
-        user: {
+        user: publicUser({
           id: user._id.toString(),
           email: user.email,
+          userName: user.userName || user.username,
           role: "user",
-        },
+        }),
       });
     } catch (error) {
       return res.status(500).json({
@@ -623,6 +629,7 @@ app.post(
           analysis,
 
           userEmail,
+          userName: req.user.userName || req.user.email.split("@")[0],
         });
 
       if (db) {
@@ -1233,17 +1240,7 @@ async function start() {
         `API running at http://localhost:${PORT}`
       );
 
-      console.log(
-        "Configured admin accounts:"
-      );
-
-      ADMIN_ACCOUNTS.forEach(
-        (admin) => {
-          console.log(
-            ` - ${admin.email}`
-          );
-        }
-      );
+      console.log(`Configured administrator accounts: ${ADMIN_ACCOUNTS.length}`);
     }
   );
 }
