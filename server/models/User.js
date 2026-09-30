@@ -1,6 +1,13 @@
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    trim: true,
+    default: function() {
+      return this.email ? this.email.split('@')[0] : 'User';
+    }
+  },
   email: { 
     type: String, 
     required: true, 
@@ -23,4 +30,11 @@ const userSchema = new mongoose.Schema({
   }
 });
 
-module.exports = mongoose.model('User', userSchema);
+let UserModel;
+try {
+  UserModel = mongoose.model('User', userSchema);
+} catch (e) {
+  UserModel = mongoose.models.User;
+}
+
+module.exports = UserModel;

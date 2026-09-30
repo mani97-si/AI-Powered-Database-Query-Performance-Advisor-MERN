@@ -662,7 +662,19 @@ app.post("/api/analyze", authenticateToken, requireAuth, async (req, res) => {
 
     const analysis = analyzeSQL(sql);
 
+    let userId = null;
+    if (db) {
+      const userDoc = await db.collection("users").findOne({ email: userEmail });
+      if (userDoc) userId = userDoc._id;
+    }
+
     const report = reportDocument({
+      userId,
+      query: sql,
+      databaseType: req.body.databaseType || "MySQL",
+      executionTime: req.body.executionTime || "1.2s",
+      cost: analysis.performanceScore,
+      recommendations: analysis.indexes || analysis.findings || [],
       title: req.body.title || "SQL Performance Analysis",
       sql,
       analysis,
@@ -731,6 +743,63 @@ app.get("/api/reports", authenticateToken, requireAuth, async (req, res) => {
       ok: false,
       error: error.message,
     });
+  }
+});
+
+/* =========================================================
+   SINGLE REPORT DETAILS & REPORT DELETION
+========================================================= */
+
+app.get("/api/reports/:id", authenticateToken, requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ ok: false, error: "Invalid report ID" });
+    }
+
+    if (!db) {
+      return res.status(503).json({ ok: false, error: "Database not connected" });
+    }
+
+    const report = await db.collection("reports").findOne({ _id: new ObjectId(id) });
+    if (!report) {
+      return res.status(404).json({ ok: false, error: "Report not found" });
+    }
+
+    if (req.user.role !== "admin" && report.userEmail !== req.user.email) {
+      return res.status(403).json({ ok: false, error: "Access denied" });
+    }
+
+    return res.json({ ok: true, report });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.delete("/api/reports/:id", authenticateToken, requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ ok: false, error: "Invalid report ID" });
+    }
+
+    if (!db) {
+      return res.status(503).json({ ok: false, error: "Database not connected" });
+    }
+
+    const report = await db.collection("reports").findOne({ _id: new ObjectId(id) });
+    if (!report) {
+      return res.status(404).json({ ok: false, error: "Report not found" });
+    }
+
+    if (req.user.role !== "admin" && report.userEmail !== req.user.email) {
+      return res.status(403).json({ ok: false, error: "Access denied" });
+    }
+
+    await db.collection("reports").deleteOne({ _id: new ObjectId(id) });
+    return res.json({ ok: true, message: "Report deleted successfully" });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
   }
 });
 

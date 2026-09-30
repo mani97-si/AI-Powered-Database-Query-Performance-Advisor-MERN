@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #ffffff;
+    width: 1400px;
+    height: 920px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 30px;
+  }
+  .container {
+    width: 100%;
+    height: 100%;
+    background: #f8fafc;
+    border: 2px solid #d7e7e5;
+    border-radius: 16px;
+    padding: 28px 40px;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 4px 20px rgba(0, 168, 150, 0.08);
+  }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 2px solid #e2e8f0;
+    padding-bottom: 16px;
+    margin-bottom: 24px;
+  }
+  .title-group h1 {
+    font-size: 24px;
+    color: #0f2b28;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .badge {
+    background: #00a896;
+    color: #ffffff;
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-weight: 600;
+  }
+  .subtitle {
+    font-size: 13px;
+    color: #64748b;
+    margin-top: 4px;
+  }
+  .diagram-area {
+    flex: 1;
+    position: relative;
+    display: flex;
+  }
+  .actor-column {
+    width: 220px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 10;
+  }
+  .actor-card {
+    background: #ffffff;
+    border: 2px solid #00a896;
+    border-radius: 14px;
+    padding: 24px 18px;
+    text-align: center;
+    box-shadow: 0 8px 16px rgba(0,168,150,0.12);
+  }
+  .actor-icon {
+    width: 68px;
+    height: 68px;
+    background: #e6f7f5;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 12px;
+    border: 2px solid #028090;
+  }
+  .actor-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #0f2b28;
+  }
+  .actor-desc {
+    font-size: 12px;
+    color: #64748b;
+    margin-top: 4px;
+  }
+  .system-boundary {
+    flex: 1;
+    margin-left: 50px;
+    background: #ffffff;
+    border: 2px dashed #00a896;
+    border-radius: 16px;
+    padding: 20px 30px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  .boundary-tag {
+    position: absolute;
+    top: -14px;
+    left: 28px;
+    background: #028090;
+    color: white;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 4px 14px;
+    border-radius: 6px;
+    letter-spacing: 0.5px;
+  }
+  .usecases-grid {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px 40px;
+    align-content: center;
+    padding: 10px 10px;
+    z-index: 5;
+  }
+  .usecase-pill {
+    background: #f4faf9;
+    border: 1.5px solid #00a896;
+    border-radius: 28px;
+    padding: 14px 22px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  }
+  .uc-id {
+    background: #028090;
+    color: white;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 12px;
+  }
+  .uc-text {
+    font-size: 14px;
+    font-weight: 600;
+    color: #1b2a2e;
+  }
+  .include-pill {
+    background: #eff6ff;
+    border: 1.5px dashed #3b82f6;
+    border-radius: 28px;
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .include-pill .uc-id {
+    background: #2563eb;
+  }
+  .include-pill .uc-text {
+    color: #1e3a8a;
+  }
+  .footer-legend {
+    display: flex;
+    gap: 28px;
+    border-top: 1px solid #e2e8f0;
+    padding-top: 12px;
+    margin-top: 16px;
+    font-size: 12px;
+    color: #64748b;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .legend-line {
+    width: 24px;
+    height: 2px;
+    background: #00a896;
+  }
+  .legend-dash {
+    width: 24px;
+    height: 2px;
+    border-top: 2px dashed #3b82f6;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="title-group">
+      <h1>UML Use Case Diagram <span class="badge">QueryPilot v2.0</span></h1>
+      <div class="subtitle">AI-Powered Database Query Performance Advisor Architecture & Actor Interaction</div>
+    </div>
+    <div style="font-size: 12px; color: #028090; font-weight: 600; background: #e6f7f5; padding: 6px 14px; border-radius: 8px; border: 1px solid #b2e4df;">
+      System Boundary: QueryPilot Web Platform
+    </div>
+  </div>
+
+  <div class="diagram-area">
+    <div class="actor-column">
+      <div class="actor-card">
+        <div class="actor-icon">
+          <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="#028090" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path>
+            <circle cx="12" cy="7" r="4"></circle>
+          </svg>
+        </div>
+        <div class="actor-title">Database Developer / DBA</div>
+        <div class="actor-desc">Authenticated User</div>
+      </div>
+    </div>
+
+    <div class="system-boundary">
+      <div class="boundary-tag">&laquo;system&raquo; QueryPilot Advisory Engine</div>
+      
+      <div class="usecases-grid">
+        <div class="usecase-pill">
+          <span class="uc-id">UC-01</span>
+          <span class="uc-text">User Sign-Up & Secure JWT Login</span>
+        </div>
+
+        <div class="usecase-pill">
+          <span class="uc-id">UC-02</span>
+          <span class="uc-text">Ingest Raw SQL / Execution Plan</span>
+        </div>
+
+        <div class="usecase-pill">
+          <span class="uc-id">UC-03</span>
+          <span class="uc-text">Run Automated Bottleneck Diagnostics</span>
+        </div>
+
+        <div class="include-pill">
+          <span class="uc-id">&laquo;include&raquo;</span>
+          <span class="uc-text">Detect Full Scans & Non-Sargable Clauses</span>
+        </div>
+
+        <div class="usecase-pill">
+          <span class="uc-id">UC-04</span>
+          <span class="uc-text">Synthesize AI Query Rewrites & Indexes</span>
+        </div>
+
+        <div class="include-pill">
+          <span class="uc-id">&laquo;include&raquo;</span>
+          <span class="uc-text">Score Cost & Generate DDL Indexes</span>
+        </div>
+
+        <div class="usecase-pill">
+          <span class="uc-id">UC-05</span>
+          <span class="uc-text">Persist & Filter Query Report History</span>
+        </div>
+
+        <div class="usecase-pill">
+          <span class="uc-id">UC-06</span>
+          <span class="uc-text">Export Formatted PDF Performance Report</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-legend">
+    <div class="legend-item"><span class="legend-line"></span> Direct User Actor Association</div>
+    <div class="legend-item"><span class="legend-dash"></span> &laquo;include&raquo; Dependency (Automated Analyzer Engine Sub-tasks)</div>
+    <div class="legend-item" style="margin-left: auto;"><strong>Security:</strong> Route Protected by JWT Bearer Token | <strong>Persistence:</strong> MongoDB</div>
+  </div>
+</div>
+</body>
+</html>
