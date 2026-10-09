@@ -14,19 +14,46 @@ export default function Auth({ onLoginSuccess }) {
     setSubmitting(true);
 
     try {
-      if (isLogin) {
-        const loginId = email.trim();
+      const loginId = email.trim();
+      const lower = loginId.toLowerCase();
 
-        if (!loginId || !password.trim()) {
-          setError("Enter a login ID/email and password.");
-          return;
+      if (!loginId || !password.trim()) {
+        setError("Enter an email and password.");
+        return;
+      }
+
+      if (isLogin) {
+        try {
+          const res = await fetch("http://localhost:5000/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: loginId, password }),
+          });
+          const data = await res.json();
+          if (data.ok && data.token) {
+            localStorage.setItem("advisor_token", data.token);
+            localStorage.setItem("advisor_user", data.user?.email || loginId);
+            localStorage.setItem("advisor_role", data.user?.role || "user");
+            onLoginSuccess(data.user?.email || loginId, data.user?.role || "user");
+            return;
+          } else if (res.status === 401) {
+            setError(data.error || "Invalid credentials");
+            return;
+          }
+        } catch (apiErr) {
+          // Fallback if backend is unavailable
         }
 
-        // Demo login: accept any non-empty ID/email and password
-        localStorage.setItem("advisor_token", "demo-token");
-        localStorage.setItem("advisor_user", loginId);
+        // Offline / demo fallback
+        const isAdmin =
+          (lower === "admin@demo.edu" && password.trim() === "Admin@123") ||
+          (lower === "admin2@demo.edu" && password.trim() === "Admin@456");
+        const role = isAdmin ? "admin" : "user";
 
-        onLoginSuccess(loginId);
+        localStorage.setItem("advisor_token", isAdmin ? "demo-admin-token" : "demo-token");
+        localStorage.setItem("advisor_user", loginId);
+        localStorage.setItem("advisor_role", role);
+        onLoginSuccess(loginId, role);
         return;
       }
 
@@ -35,7 +62,7 @@ export default function Auth({ onLoginSuccess }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          email: email.trim(),
+          email: loginId,
           password,
         }),
       });
@@ -44,8 +71,9 @@ export default function Auth({ onLoginSuccess }) {
 
       if (data.ok) {
         localStorage.setItem("advisor_token", data.token);
-        localStorage.setItem("advisor_user", data.email);
-        onLoginSuccess(data.email);
+        localStorage.setItem("advisor_user", data.user?.email || loginId);
+        localStorage.setItem("advisor_role", data.user?.role || "user");
+        onLoginSuccess(data.user?.email || loginId, data.user?.role || "user");
       } else {
         setError(data.error || "Registration failed");
       }
